@@ -20,7 +20,9 @@ from services.ai_decision_service import (
     build_chat_completion_endpoints,
     detect_api_format,
     _extract_text_from_message,
-    get_max_tokens
+    get_max_tokens,
+    build_llm_payload,
+    build_llm_headers,
 )
 from services.ai_shared_tools import (
     SHARED_SIGNAL_TOOLS,
@@ -728,20 +730,13 @@ def generate_prompt_with_ai_stream(
 
         if api_format == 'anthropic':
             endpoints = [endpoint]
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": account.api_key,
-                "anthropic-version": "2023-06-01"
-            }
         else:
             endpoints = build_chat_completion_endpoints(account.base_url, account.model)
             if not endpoints:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'Invalid API configuration'})}\n\n"
                 return
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {account.api_key}"
-            }
+        # Use unified headers builder (see build_llm_headers in ai_decision_service)
+        headers = build_llm_headers(api_format, account.api_key)
 
         # Tool calling loop
         max_rounds = 10
@@ -768,27 +763,25 @@ def generate_prompt_with_ai_stream(
 
             yield f"data: {json.dumps({'type': 'tool_round', 'round': tool_round, 'max': max_rounds})}\n\n"
 
-            # Build payload based on API format
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
             if api_format == 'anthropic':
                 sys_prompt, anthropic_messages = _convert_messages_to_anthropic(messages)
-                payload = {
-                    "model": account.model,
-                    "max_tokens": get_max_tokens(account.model),
-                    "system": sys_prompt,
-                    "messages": anthropic_messages,
-                }
-                if not is_last:
-                    payload["tools"] = PROMPT_TOOLS_ANTHROPIC
+                tools_for_round = PROMPT_TOOLS_ANTHROPIC if not is_last else None
+                payload = build_llm_payload(
+                    model=account.model,
+                    messages=[{"role": "system", "content": sys_prompt}] + anthropic_messages,
+                    api_format=api_format,
+                    tools=tools_for_round,
+                )
             else:
-                payload = {
-                    "model": account.model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": get_max_tokens(account.model),
-                }
-                if not is_last:
-                    payload["tools"] = PROMPT_TOOLS
-                    payload["tool_choice"] = "auto"
+                tools_for_round = PROMPT_TOOLS if not is_last else None
+                payload = build_llm_payload(
+                    model=account.model,
+                    messages=messages,
+                    api_format=api_format,
+                    tools=tools_for_round,
+                    tool_choice="auto" if not is_last else None,
+                )
 
             # API call with retry logic
             response = None

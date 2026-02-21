@@ -16,7 +16,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from database.models import AiSignalConversation, AiSignalMessage, Account
-from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens
+from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens, build_llm_payload, build_llm_headers
 from services.signal_backtest_service import signal_backtest_service, TIMEFRAME_MS
 from services.system_logger import system_logger
 
@@ -353,10 +353,8 @@ def generate_signal_with_ai(
         if not endpoints:
             return {"success": False, "error": "Invalid base_url configuration"}
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {account.api_key}"
-        }
+        # Use unified headers builder (see build_llm_headers in ai_decision_service)
+        headers = build_llm_headers("openai", account.api_key)
 
         # Function Calling loop (max 30 rounds, last round forces no tools)
         max_tool_rounds = 30
@@ -368,23 +366,21 @@ def generate_signal_with_ai(
             is_last_round = (tool_round == max_tool_rounds)
             logger.info(f"[AI Signal Gen {request_id}] Tool round {tool_round}/{max_tool_rounds} (last={is_last_round})")
 
-            request_payload = {
-                "model": account.model,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": get_max_tokens(account.model),
-            }
-
             # On last round, force model to give final answer without tools
             if is_last_round:
-                # Don't include tools, force text response
                 messages.append({
                     "role": "user",
                     "content": "You have used enough tools. Now output the final signal configuration based on your analysis. Include the ```signal-config``` block."
                 })
-            else:
-                request_payload["tools"] = SIGNAL_TOOLS
-                request_payload["tool_choice"] = "auto"
+
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
+            request_payload = build_llm_payload(
+                model=account.model,
+                messages=messages,
+                api_format="openai",
+                tools=SIGNAL_TOOLS if not is_last_round else None,
+                tool_choice="auto" if not is_last_round else None,
+            )
 
             response = None
             last_error = None
@@ -1455,10 +1451,8 @@ def generate_signal_with_ai_stream(
             yield _sse_event("error", {"message": "Invalid base_url configuration"})
             return
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {account.api_key}"
-        }
+        # Use unified headers builder (see build_llm_headers in ai_decision_service)
+        headers = build_llm_headers("openai", account.api_key)
 
         yield _sse_event("status", {"message": "Analyzing your request..."})
 
@@ -1480,21 +1474,20 @@ def generate_signal_with_ai_stream(
                 "max_rounds": max_tool_rounds
             })
 
-            request_payload = {
-                "model": account.model,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": get_max_tokens(account.model),
-            }
-
             if is_last_round:
                 messages.append({
                     "role": "user",
                     "content": "Output the final signal configuration now. Include the ```signal-config``` block."
                 })
-            else:
-                request_payload["tools"] = SIGNAL_TOOLS
-                request_payload["tool_choice"] = "auto"
+
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
+            request_payload = build_llm_payload(
+                model=account.model,
+                messages=messages,
+                api_format="openai",
+                tools=SIGNAL_TOOLS if not is_last_round else None,
+                tool_choice="auto" if not is_last_round else None,
+            )
 
             # Call API
             response = None

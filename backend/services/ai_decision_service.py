@@ -1325,6 +1325,152 @@ def build_chat_completion_endpoints(base_url: str, model: Optional[str] = None) 
     return deduped
 
 
+# ---------------------------------------------------------------------------
+# Unified LLM payload & headers builders
+# ---------------------------------------------------------------------------
+# ALL AI features (Trader, Prompt Gen, Program Gen, Signal Gen, Hyper AI,
+# K-line Analysis, Attribution, Context Compression, Memory) MUST use these
+# two functions to build API payloads and headers.
+# When adding a NEW AI feature, import and call these instead of manually
+# assembling payload dicts — this ensures correct parameter handling for
+# reasoning models, new OpenAI models, Anthropic format, etc.
+# ---------------------------------------------------------------------------
+
+# Canonical list of reasoning models that do NOT support temperature
+# and require max_completion_tokens (OpenAI format only).
+REASONING_MODEL_MARKERS = [
+    # OpenAI
+    "gpt-5", "o1-preview", "o1-mini", "o1-", "o1", "o3-", "o3", "o4-", "o4",
+    # DeepSeek
+    "deepseek-r1", "deepseek-reasoner",
+    # Qwen
+    "qwq", "qwen-plus-thinking", "qwen-max-thinking", "qwen3-thinking", "qwen-turbo-thinking",
+    # Claude (extended thinking)
+    "claude-4", "claude-sonnet-4-5",
+    # Gemini (thinking mode)
+    "gemini-2.5", "gemini-3", "gemini-2.0-flash-thinking",
+    # Grok
+    "grok-3-mini",
+]
+
+# Models that use max_completion_tokens instead of max_tokens (OpenAI format).
+# This includes all reasoning models plus newer non-reasoning models.
+NEW_MODEL_MARKERS = ["gpt-4o"]
+
+
+def is_reasoning_model(model: str) -> bool:
+    """Check if a model is a reasoning model (no temperature, special params)."""
+    model_lower = (model or "").lower()
+    return any(marker in model_lower for marker in REASONING_MODEL_MARKERS)
+
+
+def is_new_openai_model(model: str) -> bool:
+    """Check if a model uses max_completion_tokens instead of max_tokens."""
+    return is_reasoning_model(model) or any(
+        marker in (model or "").lower() for marker in NEW_MODEL_MARKERS
+    )
+
+
+def build_llm_headers(api_format: str, api_key: str) -> dict:
+    """Build HTTP headers for LLM API calls.
+
+    Args:
+        api_format: 'anthropic' or 'openai'
+        api_key: The API key
+    """
+    headers = {"Content-Type": "application/json"}
+    if api_format == "anthropic":
+        headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def build_llm_payload(
+    model: str,
+    messages: list,
+    api_format: str,
+    max_tokens: int = None,
+    temperature: float = 0.7,
+    tools: list = None,
+    tool_choice: str = None,
+    stream: bool = False,
+) -> dict:
+    """Build a correct LLM API payload with proper parameter handling.
+
+    Automatically handles:
+    - Reasoning models: omits temperature, uses max_completion_tokens (OpenAI)
+    - Anthropic format: separates system messages, always uses max_tokens
+    - GPT-5: adds reasoning_effort parameter
+    - New OpenAI models (gpt-4o, o1, o3, etc.): max_completion_tokens
+
+    Args:
+        model: Model name (e.g. "gpt-4o", "o1", "claude-3-5-sonnet")
+        messages: Chat messages list
+        api_format: 'anthropic' or 'openai'
+        max_tokens: Max output tokens (None = auto via get_max_tokens)
+        temperature: Temperature value (ignored for reasoning models)
+        tools: Tool definitions (format must match api_format)
+        tool_choice: Tool choice strategy (e.g. "auto")
+        stream: Whether to enable streaming
+    """
+    if max_tokens is None:
+        max_tokens = get_max_tokens(model)
+
+    reasoning = is_reasoning_model(model)
+    new_model = is_new_openai_model(model)
+
+    if api_format == "anthropic":
+        # Anthropic: separate system messages, always use max_tokens
+        system_parts = []
+        api_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_parts.append(msg["content"])
+            else:
+                api_messages.append(msg)
+
+        payload = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": api_messages,
+        }
+        if system_parts:
+            payload["system"] = "\n".join(system_parts)
+    else:
+        # OpenAI format
+        payload = {
+            "model": model,
+            "messages": messages,
+        }
+        # Reasoning models don't support temperature
+        if not reasoning and temperature is not None:
+            payload["temperature"] = temperature
+
+        # New models use max_completion_tokens, older use max_tokens
+        if new_model:
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
+
+        # GPT-5 family: set reasoning_effort
+        if "gpt-5" in (model or "").lower():
+            payload["reasoning_effort"] = "low"
+
+    # Optional: tools
+    if tools:
+        payload["tools"] = tools
+        if tool_choice and api_format != "anthropic":
+            payload["tool_choice"] = tool_choice
+
+    # Optional: streaming
+    if stream:
+        payload["stream"] = True
+
+    return payload
+
+
 def _extract_text_from_message(content: Any) -> str:
     """Normalize OpenAI/Anthropic style message content into a plain string."""
     if isinstance(content, str):
@@ -1505,67 +1651,18 @@ def call_ai_for_decision(
 
     logger.debug("Using prompt template '%s' for account %s", template.key, account.id)
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {account.api_key}",
-    }
-
-    # Use OpenAI-compatible chat completions format
-    # Detect model type for appropriate parameter handling
-    model_lower = (account.model or "").lower()
-
-    # Reasoning models that don't support temperature parameter
-    # Support multi-vendor reasoning models: OpenAI, DeepSeek, Qwen, Claude, Gemini, Grok
-    # Note: Include both "o1" and "o1-" to match "o1", "o1-mini", "o1-preview" etc.
-    is_reasoning_model = any(
-        marker in model_lower for marker in [
-            "gpt-5", "o1-preview", "o1-mini", "o1-", "o1", "o3-", "o3", "o4-", "o4",  # OpenAI
-            "deepseek-r1", "deepseek-reasoner",  # DeepSeek
-            "qwq", "qwen-plus-thinking", "qwen-max-thinking", "qwen3-thinking", "qwen-turbo-thinking",  # Qwen
-            "claude-4", "claude-sonnet-4-5",  # Claude (extended thinking)
-            "gemini-2.5", "gemini-3", "gemini-2.0-flash-thinking",  # Gemini (thinking mode)
-            "grok-3-mini"  # Grok (only mini has reasoning_content)
-        ]
-    )
-
-    # New models that use max_completion_tokens instead of max_tokens
-    is_new_model = is_reasoning_model or any(marker in model_lower for marker in ["gpt-4o"])
-
-    payload = {
-        "model": account.model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-    }
-
-    # Reasoning models (GPT-5, o1, o3, o4) don't support custom temperature
-    # Only add temperature parameter for non-reasoning models
-    if not is_reasoning_model:
-        payload["temperature"] = 0.7
-
-    # Use max_completion_tokens for newer models
-    # Use max_tokens for older models (GPT-3.5, GPT-4, GPT-4-turbo, Deepseek)
-    # Get model-specific max_tokens value based on model capabilities
-    max_tokens_value = get_max_tokens(account.model)
-    if is_new_model:
-        # Newer models use max_completion_tokens parameter
-        payload["max_completion_tokens"] = max_tokens_value
-    else:
-        # Older models use max_tokens parameter
-        payload["max_tokens"] = max_tokens_value
-
-    # For GPT-5 family set reasoning_effort to balance latency and quality
-    if "gpt-5" in model_lower:
-        payload["reasoning_effort"] = "low"
+    # Use unified payload/headers builders (see build_llm_payload docstring)
+    headers = build_llm_headers("openai", account.api_key)
 
     # Enable streaming for deepseek-reasoner to handle high-load scenarios
-    # DeepSeek official recommendation: use streaming to avoid 30s timeout during high load
     use_streaming = (account.model == "deepseek-reasoner")
-    if use_streaming:
-        payload["stream"] = True
+
+    payload = build_llm_payload(
+        model=account.model,
+        messages=[{"role": "user", "content": prompt}],
+        api_format="openai",
+        stream=use_streaming,
+    )
 
     try:
         endpoints = build_chat_completion_endpoints(account.base_url, account.model)
@@ -1584,11 +1681,9 @@ def call_ai_for_decision(
         success = False
 
         # Reasoning models need longer timeout (they think more, respond slower)
-        if is_reasoning_model:
+        if is_reasoning_model(account.model):
             request_timeout = 240
         else:
-            # Unknown models: use 120s as conservative default
-            # This handles custom model names, future models, and proxy services
             request_timeout = 120
 
         for endpoint in endpoints:

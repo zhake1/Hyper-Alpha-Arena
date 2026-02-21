@@ -34,7 +34,10 @@ from services.ai_decision_service import (
     build_chat_completion_endpoints,
     detect_api_format,
     _extract_text_from_message,
-    get_max_tokens
+    get_max_tokens,
+    build_llm_payload,
+    build_llm_headers,
+    is_reasoning_model,
 )
 from services.ai_stream_service import (
     get_buffer_manager,
@@ -226,47 +229,15 @@ def test_llm_connection(
     if not model:
         model = provider_config.models[0] if provider_config and provider_config.models else "gpt-3.5-turbo"
 
-    # Check if model is a reasoning model that requires special parameter handling
-    # Reasoning models (o1, o3, deepseek-r1, etc.):
-    # - Use max_completion_tokens instead of max_tokens
-    # - Do not support temperature parameter
-    # Note: This logic must stay in sync with stream_chat_response and stream_onboarding_response
-    model_lower = model.lower()
-    is_reasoning_model = any(
-        marker in model_lower for marker in [
-            "o1-", "o1", "o3-", "o3", "o4-",  # OpenAI reasoning models
-            "deepseek-r1", "deepseek-reasoner",  # DeepSeek reasoning
-        ]
-    )
-
     try:
-        # Build request based on API format
-        if api_format == "anthropic":
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json"
-            }
-            payload = {
-                "model": model,
-                "max_tokens": 10,
-                "messages": [{"role": "user", "content": "Hi"}]
-            }
-        else:
-            # OpenAI format
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": "Hi"}]
-            }
-            # Use max_completion_tokens for reasoning models, max_tokens for others
-            if is_reasoning_model:
-                payload["max_completion_tokens"] = 10
-            else:
-                payload["max_tokens"] = 10
+        # Use unified headers/payload builders (see build_llm_payload in ai_decision_service)
+        headers = build_llm_headers(api_format, api_key)
+        payload = build_llm_payload(
+            model=model,
+            messages=[{"role": "user", "content": "Hi"}],
+            api_format=api_format,
+            max_tokens=10,
+        )
 
         response = requests.post(url, headers=headers, json=payload, timeout=30)
 
@@ -527,24 +498,8 @@ def stream_chat_response(
         yield format_sse_event("error", {"message": "Invalid API endpoint"})
         return
 
-    # Prepare request headers
-    headers = {"Content-Type": "application/json"}
-    if api_format == "anthropic":
-        headers["x-api-key"] = api_key
-        headers["anthropic-version"] = "2023-06-01"
-    else:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    max_tokens = get_max_tokens(model)
-
-    # Check if model is a reasoning model (for max_completion_tokens)
-    model_lower = model.lower()
-    is_reasoning_model = any(
-        marker in model_lower for marker in [
-            "o1-", "o1", "o3-", "o3", "o4-",
-            "deepseek-r1", "deepseek-reasoner",
-        ]
-    )
+    # Use unified headers builder (see build_llm_headers in ai_decision_service)
+    headers = build_llm_headers(api_format, api_key)
 
     # Create assistant message upfront with is_complete=False for interrupt recovery
     assistant_msg = HyperAiMessage(
@@ -567,38 +522,23 @@ def stream_chat_response(
             iteration += 1
             is_last_round = (iteration == MAX_TOOL_ITERATIONS)
 
-            # Build request body (non-streaming, like ai_program_service)
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
             if api_format == "anthropic":
-                system_content = ""
-                api_messages = []
-                for msg in messages:
-                    if msg["role"] == "system":
-                        system_content += msg["content"] + "\n"
-                    else:
-                        api_messages.append(msg)
-                body = {
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "system": system_content.strip(),
-                    "messages": api_messages,
-                }
-                if tools and not is_last_round:
-                    body["tools"] = _convert_tools_to_anthropic(tools)
+                anthropic_tools = _convert_tools_to_anthropic(tools) if tools and not is_last_round else None
+                body = build_llm_payload(
+                    model=model,
+                    messages=messages,
+                    api_format=api_format,
+                    tools=anthropic_tools,
+                )
             else:
-                # OpenAI format (non-streaming)
-                body = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                }
-                if is_reasoning_model:
-                    body["max_completion_tokens"] = max_tokens
-                else:
-                    body["max_tokens"] = max_tokens
-                # Add tools if available and not last round
-                if tools and not is_last_round:
-                    body["tools"] = tools
-                    body["tool_choice"] = "auto"
+                body = build_llm_payload(
+                    model=model,
+                    messages=messages,
+                    api_format=api_format,
+                    tools=tools if tools and not is_last_round else None,
+                    tool_choice="auto" if tools and not is_last_round else None,
+                )
 
             # Make API call with retry
             response = None
@@ -905,54 +845,15 @@ def stream_onboarding_response(
         yield format_sse_event("error", {"message": "Invalid API endpoint"})
         return
 
-    headers = {"Content-Type": "application/json"}
-    if api_format == "anthropic":
-        headers["x-api-key"] = api_key
-        headers["anthropic-version"] = "2023-06-01"
-    else:
-        headers["Authorization"] = f"Bearer {api_key}"
+    # Use unified headers/payload builders (see build_llm_payload in ai_decision_service)
+    headers = build_llm_headers(api_format, api_key)
 
-    max_tokens = get_max_tokens(model)
-
-    # Check if model is a reasoning model that requires special parameter handling
-    # Reasoning models (o1, o3, deepseek-r1, etc.):
-    # - Use max_completion_tokens instead of max_tokens
-    # - Do not support temperature parameter
-    model_lower = model.lower()
-    is_reasoning_model = any(
-        marker in model_lower for marker in [
-            "o1-", "o1", "o3-", "o3", "o4-",  # OpenAI reasoning models
-            "deepseek-r1", "deepseek-reasoner",  # DeepSeek reasoning
-        ]
+    body = build_llm_payload(
+        model=model,
+        messages=messages,
+        api_format=api_format,
+        stream=True,
     )
-
-    if api_format == "anthropic":
-        system_content = ""
-        api_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_content += msg["content"] + "\n"
-            else:
-                api_messages.append(msg)
-        body = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "system": system_content.strip(),
-            "messages": api_messages,
-            "stream": True
-        }
-    else:
-        # OpenAI format
-        body = {
-            "model": model,
-            "messages": messages,
-            "stream": True
-        }
-        # Use max_completion_tokens for reasoning models, max_tokens for others
-        if is_reasoning_model:
-            body["max_completion_tokens"] = max_tokens
-        else:
-            body["max_tokens"] = max_tokens
 
     response = None
     for attempt in range(API_MAX_RETRIES):

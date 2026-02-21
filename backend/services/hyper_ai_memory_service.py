@@ -208,32 +208,23 @@ def check_deduplication(
         return {"action": "ADD", "merged": ""}
 
     try:
-        from services.ai_decision_service import build_chat_completion_endpoints
+        from services.ai_decision_service import build_chat_completion_endpoints, build_llm_payload, build_llm_headers
 
         if api_format == "anthropic":
             endpoint = f"{base_url.rstrip('/')}/messages"
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            }
-            body = {
-                "model": model,
-                "max_tokens": 200,
-                "messages": [{"role": "user", "content": prompt}]
-            }
         else:
             endpoints = build_chat_completion_endpoints(base_url, model)
             endpoint = endpoints[0] if endpoints else f"{base_url}/chat/completions"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
-            body = {
-                "model": model,
-                "max_tokens": 200,
-                "messages": [{"role": "user", "content": prompt}]
-            }
+
+        # Use unified headers/payload builders (see build_llm_payload in ai_decision_service)
+        headers = build_llm_headers(api_format, api_key)
+        body = build_llm_payload(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            api_format=api_format,
+            max_tokens=200,
+            temperature=None,
+        )
 
         response = requests.post(endpoint, headers=headers, json=body, timeout=30)
 
@@ -376,32 +367,23 @@ def extract_memories_from_conversation(
         return []
 
     try:
-        from services.ai_decision_service import build_chat_completion_endpoints
+        from services.ai_decision_service import build_chat_completion_endpoints, build_llm_payload, build_llm_headers
 
         if api_format == "anthropic":
             endpoint = f"{base_url.rstrip('/')}/messages"
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            }
-            body = {
-                "model": model,
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": prompt}]
-            }
         else:
             endpoints = build_chat_completion_endpoints(base_url, model)
             endpoint = endpoints[0] if endpoints else f"{base_url}/chat/completions"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
-            body = {
-                "model": model,
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": prompt}]
-            }
+
+        # Use unified headers/payload builders (see build_llm_payload in ai_decision_service)
+        headers = build_llm_headers(api_format, api_key)
+        body = build_llm_payload(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            api_format=api_format,
+            max_tokens=500,
+            temperature=None,
+        )
 
         response = requests.post(endpoint, headers=headers, json=body, timeout=60)
 

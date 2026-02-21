@@ -21,7 +21,7 @@ from database.models import (
     AiProgramConversation, AiProgramMessage, TradingProgram, Account,
     BacktestResult, BacktestTriggerLog, AccountProgramBinding
 )
-from services.ai_decision_service import build_chat_completion_endpoints, detect_api_format, _extract_text_from_message, get_max_tokens
+from services.ai_decision_service import build_chat_completion_endpoints, detect_api_format, _extract_text_from_message, get_max_tokens, build_llm_payload, build_llm_headers
 from services.system_logger import system_logger
 from services.ai_shared_tools import (
     SHARED_SIGNAL_TOOLS,
@@ -1972,20 +1972,13 @@ You are creating a new program. Start fresh and design the strategy based on use
         # For OpenAI format, use fallback endpoints; for Anthropic, use single endpoint
         if api_format == 'anthropic':
             endpoints = [endpoint]
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": account.api_key,
-                "anthropic-version": "2023-06-01"
-            }
         else:
             endpoints = build_chat_completion_endpoints(account.base_url, account.model)
             if not endpoints:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'Invalid API configuration'})}\n\n"
                 return
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {account.api_key}"
-            }
+        # Use unified headers builder (see build_llm_headers in ai_decision_service)
+        headers = build_llm_headers(api_format, account.api_key)
 
         # Tool calling loop
         max_rounds = 15
@@ -2014,28 +2007,25 @@ You are creating a new program. Start fresh and design the strategy based on use
 
             yield f"data: {json.dumps({'type': 'tool_round', 'round': tool_round, 'max': max_rounds})}\n\n"
 
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
             if api_format == 'anthropic':
-                # Build Anthropic format payload
                 system_prompt, anthropic_messages = _convert_messages_to_anthropic(messages)
-                payload = {
-                    "model": account.model,
-                    "max_tokens": get_max_tokens(account.model),
-                    "system": system_prompt,
-                    "messages": anthropic_messages,
-                }
-                if not is_last:
-                    payload["tools"] = PROGRAM_TOOLS_ANTHROPIC
+                tools_for_round = PROGRAM_TOOLS_ANTHROPIC if not is_last else None
+                payload = build_llm_payload(
+                    model=account.model,
+                    messages=[{"role": "system", "content": system_prompt}] + anthropic_messages,
+                    api_format=api_format,
+                    tools=tools_for_round,
+                )
             else:
-                # OpenAI format payload
-                payload = {
-                    "model": account.model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": get_max_tokens(account.model),
-                }
-                if not is_last:
-                    payload["tools"] = PROGRAM_TOOLS
-                    payload["tool_choice"] = "auto"
+                tools_for_round = PROGRAM_TOOLS if not is_last else None
+                payload = build_llm_payload(
+                    model=account.model,
+                    messages=messages,
+                    api_format=api_format,
+                    tools=tools_for_round,
+                    tool_choice="auto" if not is_last else None,
+                )
 
             # Call API
             logger.info(f"[AI Program {request_id}] Round {tool_round}: Calling API with {len(endpoints)} endpoints, format={api_format}")

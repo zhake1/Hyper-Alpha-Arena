@@ -23,7 +23,7 @@ from database.models import (
 )
 from database.snapshot_connection import SnapshotSessionLocal
 from database.snapshot_models import HyperliquidTrade
-from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens
+from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens, build_llm_payload, build_llm_headers
 
 logger = logging.getLogger(__name__)
 
@@ -746,10 +746,8 @@ def generate_attribution_analysis_stream(
             yield f"event: error\ndata: {json.dumps({'message': 'Invalid API configuration'})}\n\n"
             return
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {account.api_key}"
-        }
+        # Use unified headers builder (see build_llm_headers in ai_decision_service)
+        headers = build_llm_headers("openai", account.api_key)
 
         # Function calling loop
         max_rounds = 15
@@ -762,21 +760,20 @@ def generate_attribution_analysis_stream(
         for round_num in range(max_rounds):
             is_last = (round_num == max_rounds - 1)
 
-            request_payload = {
-                "model": account.model,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": get_max_tokens(account.model),
-            }
-
             if is_last:
                 messages.append({
                     "role": "user",
                     "content": "Now provide your final analysis with diagnosis cards and suggestions."
                 })
-            else:
-                request_payload["tools"] = ATTRIBUTION_TOOLS
-                request_payload["tool_choice"] = "auto"
+
+            # Use unified payload builder (see build_llm_payload in ai_decision_service)
+            request_payload = build_llm_payload(
+                model=account.model,
+                messages=messages,
+                api_format="openai",
+                tools=ATTRIBUTION_TOOLS if not is_last else None,
+                tool_choice="auto" if not is_last else None,
+            )
 
             response = None
             last_error = None

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Account, KlineAIAnalysisLog
 from config.prompt_templates import KLINE_ANALYSIS_PROMPT_TEMPLATE
-from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens
+from services.ai_decision_service import build_chat_completion_endpoints, _extract_text_from_message, get_max_tokens, build_llm_payload, build_llm_headers, is_reasoning_model
 from services.market_flow_indicators import get_flow_indicators_for_prompt
 
 
@@ -443,43 +443,14 @@ def analyze_kline_chart(
             prompt = KLINE_ANALYSIS_PROMPT_TEMPLATE
 
     # Build API request
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {account.api_key}",
-        }
+        # Use unified headers/payload builders (see build_llm_payload in ai_decision_service)
+        headers = build_llm_headers("openai", account.api_key)
 
-        model_lower = (account.model or "").lower()
-        is_reasoning_model = any(
-            marker in model_lower for marker in [
-                "gpt-5", "o1-preview", "o1-mini", "o1-", "o3-", "o4-",
-                "deepseek-r1", "deepseek-reasoner",
-                "qwq", "qwen-plus-thinking", "qwen-max-thinking", "qwen3-thinking",
-                "claude-4", "claude-sonnet-4-5",
-                "gemini-2.5", "gemini-3", "gemini-2.0-flash-thinking",
-                "grok-3-mini"
-            ]
+        payload = build_llm_payload(
+            model=account.model,
+            messages=[{"role": "user", "content": prompt}],
+            api_format="openai",
         )
-
-        is_new_model = is_reasoning_model or any(marker in model_lower for marker in ["gpt-4o"])
-
-        payload = {
-            "model": account.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        }
-
-        if not is_reasoning_model:
-            payload["temperature"] = 0.7
-
-        max_tokens_value = get_max_tokens(account.model)
-        if is_new_model:
-            payload["max_completion_tokens"] = max_tokens_value
-        else:
-            payload["max_tokens"] = max_tokens_value
 
         # Call AI API
         endpoints = build_chat_completion_endpoints(account.base_url, account.model)
