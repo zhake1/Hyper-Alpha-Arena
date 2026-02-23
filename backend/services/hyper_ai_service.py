@@ -3,16 +3,17 @@ Hyper AI Service - Main Agent for Full-Site AI Intelligence
 
 Hyper AI is the master agent that:
 - Guides users through onboarding to collect trading preferences
-- Maintains user profile and memory across conversations
+- Maintains user profile and long-term memory across conversations
 - Orchestrates sub-agents (Prompt AI, Program AI, Signal AI, Attribution AI)
 - Implements context compression for long conversations
 - Supports multiple LLM providers with user selection
 
 Architecture:
 - StreamBuffer-based async streaming (same as other AI services)
-- Memory retrieval via tools, not context injection
-- Mem0-style deduplication for memory management
-- Context compression at 80% of context window
+- Long-term memory auto-injected into system prompt alongside user profile
+- Mem0-style batch deduplication for memory management
+- Context compression at 70% of context window
+- Memory extraction runs async in background thread during compression
 """
 import json
 import logging
@@ -405,6 +406,14 @@ def build_messages_for_api(
                 "content": f"User Profile:\n{profile_context}"
             })
 
+    # Inject long-term memories into context
+    memory_context = _build_memory_context(db)
+    if memory_context:
+        messages.append({
+            "role": "system",
+            "content": memory_context
+        })
+
     # Check compression points - load summary instead of old messages
     conversation = db.query(HyperAiConversation).filter(
         HyperAiConversation.id == conversation_id
@@ -472,6 +481,43 @@ def _build_profile_context(profile: HyperAiProfile) -> str:
         parts.append(f"Preferred Timeframe: {profile.preferred_timeframe}")
     if profile.capital_scale:
         parts.append(f"Capital Scale: {profile.capital_scale}")
+    return "\n".join(parts)
+
+
+def _build_memory_context(db: Session) -> str:
+    """
+    Build long-term memory context for system prompt injection.
+    Groups memories by category for readability.
+    """
+    from services.hyper_ai_memory_service import get_memories, MAX_MEMORIES
+
+    memories = get_memories(db, limit=MAX_MEMORIES)
+    if not memories:
+        return ""
+
+    # Group by category
+    groups: Dict[str, List[str]] = {}
+    category_labels = {
+        "preference": "Trading Preferences",
+        "decision": "Key Decisions",
+        "lesson": "Lessons Learned",
+        "insight": "Market Insights",
+        "context": "Context",
+    }
+
+    for m in memories:
+        cat = m.get("category", "context")
+        label = category_labels.get(cat, cat.title())
+        if label not in groups:
+            groups[label] = []
+        groups[label].append(m["content"])
+
+    parts = ["Long-term Memory (insights from past conversations):"]
+    for label, items in groups.items():
+        parts.append(f"\n[{label}]")
+        for item in items:
+            parts.append(f"- {item}")
+
     return "\n".join(parts)
 
 

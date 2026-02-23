@@ -1421,6 +1421,21 @@
     "configTitle": "Hyper AI 配置",
     "skills": "技能",
     "skillsComingSoon": "即将推出...",
+    "memory": {
+      "title": "Hyper AI 的记忆",
+      "button": "记忆",
+      "empty": "暂无记忆。随着你与 Hyper AI 的对话，它会记住关键的交易洞察。",
+      "items": "{{count}} 条记忆",
+      "source": "来源",
+      "importance": "重要性",
+      "category": {
+        "preference": "交易偏好",
+        "decision": "关键决策",
+        "lesson": "经验教训",
+        "insight": "市场洞察",
+        "context": "上下文"
+      }
+    },
     "welcomeWithName": "你好，{{name}}！我是 Hyper AI，你的专属交易助手。",
     "welcomeNoName": "你好！我是 Hyper AI，Hyper Alpha Arena 的智能助手。",
     "welcomeCapabilities": "我可以帮你：",

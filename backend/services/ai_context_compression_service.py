@@ -27,6 +27,7 @@ Usage:
 """
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
@@ -659,24 +660,44 @@ def compress_messages(
     to_compress = conversation_messages[:split_index]
     to_keep = conversation_messages[split_index:]
 
-    # Extract memories from messages being compressed
+    # Extract memories in background thread (non-blocking)
     if extract_memories and db:
         try:
-            from services.hyper_ai_memory_service import process_compression_memories
             mem_parts = []
             for m in to_compress:
                 role = m.get('role', 'unknown').upper()
                 content = m.get('content', '')
                 if isinstance(content, str) and content.strip():
                     mem_parts.append(f"{role}: {content}")
-                # Include tool call info for memory extraction
                 for tc in m.get('tool_calls', []):
                     fn = tc.get('function', {})
                     mem_parts.append(f"TOOL_CALL: {fn.get('name', '?')}")
             conv_text = "\n\n".join(mem_parts)
-            process_compression_memories(db, conv_text, api_config)
+
+            # Copy api_config to avoid thread-safety issues
+            api_config_copy = dict(api_config)
+
+            def _extract_memories_bg(conv_text_bg, api_cfg_bg):
+                """Background thread for memory extraction + batch dedup."""
+                from database.connection import SessionLocal
+                bg_db = SessionLocal()
+                try:
+                    from services.hyper_ai_memory_service import process_compression_memories
+                    count = process_compression_memories(bg_db, conv_text_bg, api_cfg_bg)
+                    logger.warning(f"[Compression] Background memory extraction done: {count} memories")
+                except Exception as e:
+                    logger.warning(f"[Compression] Background memory extraction failed: {type(e).__name__}: {e}")
+                finally:
+                    bg_db.close()
+
+            thread = threading.Thread(
+                target=_extract_memories_bg,
+                args=(conv_text, api_config_copy),
+                daemon=True
+            )
+            thread.start()
         except Exception as e:
-            logger.warning(f"Memory extraction failed: {e}")
+            logger.warning(f"[Compression] Failed to start memory extraction thread: {e}")
 
     # Generate summary
     summary = generate_summary(to_compress, api_config)

@@ -1402,6 +1402,21 @@
     "configTitle": "Hyper AI Config",
     "skills": "Skills",
     "skillsComingSoon": "Coming soon...",
+    "memory": {
+      "title": "What Hyper AI Remembered",
+      "button": "Memory",
+      "empty": "No memories yet. As you chat with Hyper AI, it will remember key insights from your conversations.",
+      "items": "{{count}} memories",
+      "source": "Source",
+      "importance": "Importance",
+      "category": {
+        "preference": "Trading Preferences",
+        "decision": "Key Decisions",
+        "lesson": "Lessons Learned",
+        "insight": "Market Insights",
+        "context": "Context"
+      }
+    },
     "welcomeWithName": "Hello, {{name}}! I'm Hyper AI, your personal trading assistant.",
     "welcomeNoName": "Hello! I'm Hyper AI, the intelligent assistant for Hyper Alpha Arena.",
     "welcomeCapabilities": "I can help you:",
