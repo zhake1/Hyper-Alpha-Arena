@@ -347,35 +347,43 @@ class HistoricalDataProvider:
             return []
 
     def _persist_binance_klines(self, symbol: str, period: str, klines: list):
-        """Persist Binance klines to database."""
+        """Persist Binance klines to database using ORM."""
         from database.models import CryptoKline
 
         try:
+            inserted = 0
             for k in klines:
-                # Check if exists
-                existing = self.db.execute(text("""
-                    SELECT 1 FROM crypto_klines
-                    WHERE symbol = :symbol AND period = :period AND exchange = :exchange
-                    AND timestamp = :ts LIMIT 1
-                """), {"symbol": symbol, "period": period, "exchange": "binance", "ts": k.timestamp})
+                dt = datetime.fromtimestamp(k.timestamp, tz=timezone.utc)
+                datetime_str = dt.strftime("%Y-%m-%d %H:%M:%S")
 
-                if not existing.fetchone():
-                    self.db.execute(text("""
-                        INSERT INTO crypto_klines
-                        (symbol, period, exchange, timestamp, open_price, high_price, low_price, close_price, volume)
-                        VALUES (:symbol, :period, :exchange, :ts, :open, :high, :low, :close, :volume)
-                    """), {
-                        "symbol": symbol, "period": period, "exchange": "binance",
-                        "ts": k.timestamp,
-                        "open": float(k.open_price),
-                        "high": float(k.high_price),
-                        "low": float(k.low_price),
-                        "close": float(k.close_price),
-                        "volume": float(k.volume),
-                    })
+                existing = self.db.query(CryptoKline).filter(
+                    CryptoKline.symbol == symbol,
+                    CryptoKline.period == period,
+                    CryptoKline.exchange == "binance",
+                    CryptoKline.timestamp == k.timestamp,
+                ).first()
+
+                if not existing:
+                    record = CryptoKline(
+                        exchange="binance",
+                        symbol=symbol,
+                        market="CRYPTO",
+                        period=period,
+                        timestamp=k.timestamp,
+                        datetime_str=datetime_str,
+                        environment="mainnet",
+                        open_price=float(k.open_price),
+                        high_price=float(k.high_price),
+                        low_price=float(k.low_price),
+                        close_price=float(k.close_price),
+                        volume=float(k.volume),
+                        amount=float(k.quote_volume) if k.quote_volume else None,
+                    )
+                    self.db.add(record)
+                    inserted += 1
 
             self.db.commit()
-            logger.info(f"Persisted {len(klines)} Binance klines for {symbol}/{period}")
+            logger.info(f"Persisted {inserted}/{len(klines)} Binance klines for {symbol}/{period}")
 
         except Exception as e:
             logger.error(f"Failed to persist Binance klines: {e}")
