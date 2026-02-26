@@ -228,7 +228,8 @@ def get_default_user(db: Session) -> User:
 def _program_to_response(program: TradingProgram, db: Session) -> ProgramResponse:
     """Convert TradingProgram to response model."""
     binding_count = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.program_id == program.id
+        AccountProgramBinding.program_id == program.id,
+        AccountProgramBinding.is_deleted != True
     ).count()
 
     return ProgramResponse(
@@ -256,7 +257,7 @@ def _binding_to_response(binding: AccountProgramBinding, db: Session) -> Binding
     # Query signal pool names (include disabled pools for display)
     pool_names = []
     if pool_ids:
-        pools = db.query(SignalPool).filter(SignalPool.id.in_(pool_ids)).all()
+        pools = db.query(SignalPool).filter(SignalPool.id.in_(pool_ids), SignalPool.is_deleted != True).all()
         pool_map = {p.id: p.pool_name for p in pools}
         pool_names = [pool_map.get(pid, f"Pool #{pid}") for pid in pool_ids]
 
@@ -625,7 +626,7 @@ def get_program_dev_guide(lang: str = "en") -> dict:
 @router.get("/signal-pools/", response_model=List[SignalPoolInfo])
 def list_signal_pools(db: Session = Depends(get_db)):
     """List available signal pools."""
-    pools = db.query(SignalPool).filter(SignalPool.enabled == True).all()
+    pools = db.query(SignalPool).filter(SignalPool.enabled == True, SignalPool.is_deleted != True).all()
     result = []
     for pool in pools:
         symbols = pool.symbols
@@ -649,7 +650,8 @@ def list_accounts(db: Session = Depends(get_db)):
     """List available AI Traders for binding."""
     accounts = db.query(Account).filter(
         Account.is_active == "true",
-        Account.account_type == "AI"
+        Account.account_type == "AI",
+        Account.is_deleted != True
     ).all()
     return [AccountInfo(id=a.id, name=a.name, model=a.model) for a in accounts]
 
@@ -663,7 +665,8 @@ def list_programs(db: Session = Depends(get_db)):
     """List all trading programs (code templates)."""
     user = get_default_user(db)
     programs = db.query(TradingProgram).filter(
-        TradingProgram.user_id == user.id
+        TradingProgram.user_id == user.id,
+        TradingProgram.is_deleted != True
     ).order_by(TradingProgram.updated_at.desc()).all()
 
     return [_program_to_response(p, db) for p in programs]
@@ -960,7 +963,8 @@ def get_program(program_id: int, db: Session = Depends(get_db)):
     user = get_default_user(db)
     program = db.query(TradingProgram).filter(
         TradingProgram.id == program_id,
-        TradingProgram.user_id == user.id
+        TradingProgram.user_id == user.id,
+        TradingProgram.is_deleted != True
     ).first()
 
     if not program:
@@ -975,7 +979,8 @@ def update_program(program_id: int, data: ProgramUpdate, db: Session = Depends(g
     user = get_default_user(db)
     program = db.query(TradingProgram).filter(
         TradingProgram.id == program_id,
-        TradingProgram.user_id == user.id
+        TradingProgram.user_id == user.id,
+        TradingProgram.is_deleted != True
     ).first()
 
     if not program:
@@ -1004,27 +1009,12 @@ def update_program(program_id: int, data: ProgramUpdate, db: Session = Depends(g
 
 @router.delete("/{program_id}")
 def delete_program(program_id: int, db: Session = Depends(get_db)):
-    """Delete a trading program."""
-    user = get_default_user(db)
-    program = db.query(TradingProgram).filter(
-        TradingProgram.id == program_id,
-        TradingProgram.user_id == user.id
-    ).first()
-
-    if not program:
-        raise HTTPException(status_code=404, detail="Program not found")
-
-    # Check if program has active bindings
-    binding_count = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.program_id == program_id
-    ).count()
-    if binding_count > 0:
-        raise HTTPException(status_code=400, detail=f"Cannot delete: program is bound to {binding_count} AI Trader(s)")
-
-    db.delete(program)
-    db.commit()
-
-    return {"success": True, "message": "Program deleted"}
+    """Delete a trading program with dependency checking."""
+    from services.entity_deletion_service import delete_trading_program
+    result = delete_trading_program(db, program_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Program not found"))
+    return result
 
 
 @router.post("/validate", response_model=ValidationResponse)
@@ -1053,7 +1043,9 @@ def list_bindings(
     db: Session = Depends(get_db)
 ):
     """List program bindings, optionally filtered by program_id or account_id."""
-    query = db.query(AccountProgramBinding)
+    query = db.query(AccountProgramBinding).filter(
+        AccountProgramBinding.is_deleted != True
+    )
 
     if program_id:
         query = query.filter(AccountProgramBinding.program_id == program_id)
@@ -1068,19 +1060,20 @@ def list_bindings(
 def create_binding(data: BindingCreate, account_id: int = Query(...), db: Session = Depends(get_db)):
     """Create a new binding between an AI Trader and a Program."""
     # Verify account exists
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(Account.id == account_id, Account.is_deleted != True).first()
     if not account:
         raise HTTPException(status_code=404, detail="AI Trader not found")
 
     # Verify program exists
-    program = db.query(TradingProgram).filter(TradingProgram.id == data.program_id).first()
+    program = db.query(TradingProgram).filter(TradingProgram.id == data.program_id, TradingProgram.is_deleted != True).first()
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
 
     # Check for duplicate binding
     existing = db.query(AccountProgramBinding).filter(
         AccountProgramBinding.account_id == account_id,
-        AccountProgramBinding.program_id == data.program_id
+        AccountProgramBinding.program_id == data.program_id,
+        AccountProgramBinding.is_deleted != True
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Binding already exists")
@@ -1106,7 +1099,8 @@ def create_binding(data: BindingCreate, account_id: int = Query(...), db: Sessio
 def update_binding(binding_id: int, data: BindingUpdate, db: Session = Depends(get_db)):
     """Update a program binding's trigger configuration."""
     binding = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.id == binding_id
+        AccountProgramBinding.id == binding_id,
+        AccountProgramBinding.is_deleted != True
     ).first()
 
     if not binding:
@@ -1133,18 +1127,12 @@ def update_binding(binding_id: int, data: BindingUpdate, db: Session = Depends(g
 
 @router.delete("/bindings/{binding_id}")
 def delete_binding(binding_id: int, db: Session = Depends(get_db)):
-    """Delete a program binding."""
-    binding = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.id == binding_id
-    ).first()
-
-    if not binding:
-        raise HTTPException(status_code=404, detail="Binding not found")
-
-    db.delete(binding)
-    db.commit()
-
-    return {"success": True, "message": "Binding deleted"}
+    """Delete a program binding with active-status checking."""
+    from services.entity_deletion_service import delete_program_binding
+    result = delete_program_binding(db, binding_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Binding not found"))
+    return result
 
 
 # ============================================================================
@@ -1201,7 +1189,8 @@ def preview_run_binding(binding_id: int, db: Session = Depends(get_db)):
 
     # Get binding
     binding = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.id == binding_id
+        AccountProgramBinding.id == binding_id,
+        AccountProgramBinding.is_deleted != True
     ).first()
     if not binding:
         raise HTTPException(status_code=404, detail="Binding not found")
@@ -1211,7 +1200,8 @@ def preview_run_binding(binding_id: int, db: Session = Depends(get_db)):
 
     # Get program
     program = db.query(TradingProgram).filter(
-        TradingProgram.id == binding.program_id
+        TradingProgram.id == binding.program_id,
+        TradingProgram.is_deleted != True
     ).first()
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -1240,7 +1230,7 @@ def preview_run_binding(binding_id: int, db: Session = Depends(get_db)):
         try:
             pool_ids = json.loads(binding.signal_pool_ids)
             if pool_ids:
-                pool = db.query(SignalPool).filter(SignalPool.id == pool_ids[0]).first()
+                pool = db.query(SignalPool).filter(SignalPool.id == pool_ids[0], SignalPool.is_deleted != True).first()
                 if pool and pool.symbols:
                     symbols = pool.symbols
                     if isinstance(symbols, str):
@@ -1427,7 +1417,8 @@ def run_backtest(program_id: int, request: BacktestRequest, db: Session = Depend
     user = get_default_user(db)
     program = db.query(TradingProgram).filter(
         TradingProgram.id == program_id,
-        TradingProgram.user_id == user.id
+        TradingProgram.user_id == user.id,
+        TradingProgram.is_deleted != True
     ).first()
 
     if not program:
@@ -1794,7 +1785,8 @@ async def run_backtest(request: BacktestRequest, db: Session = Depends(get_db)):
 
     # Get binding info
     binding = db.query(AccountProgramBinding).filter(
-        AccountProgramBinding.id == request.binding_id
+        AccountProgramBinding.id == request.binding_id,
+        AccountProgramBinding.is_deleted != True
     ).first()
 
     if not binding:
@@ -1802,7 +1794,8 @@ async def run_backtest(request: BacktestRequest, db: Session = Depends(get_db)):
 
     # Get program
     program = db.query(TradingProgram).filter(
-        TradingProgram.id == binding.program_id
+        TradingProgram.id == binding.program_id,
+        TradingProgram.is_deleted != True
     ).first()
 
     if not program:
@@ -1822,7 +1815,7 @@ async def run_backtest(request: BacktestRequest, db: Session = Depends(get_db)):
         signal_pool_ids = pool_ids
 
         for pool_id in pool_ids:
-            pool = db.query(SignalPool).filter(SignalPool.id == pool_id).first()
+            pool = db.query(SignalPool).filter(SignalPool.id == pool_id, SignalPool.is_deleted != True).first()
             if pool:
                 if pool.symbols:
                     # symbols is a list field

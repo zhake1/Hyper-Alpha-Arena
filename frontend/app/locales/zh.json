@@ -40,7 +40,14 @@
     "error": "错误",
     "keyboardHintCtrlEnter": "按 Ctrl+Enter（Mac 上为 Cmd+Enter）发送",
     "recommended": "推荐",
-    "skip": "跳过"
+    "skip": "跳过",
+    "cannotDelete": "无法删除",
+    "dependencyPromptBinding": "存在绑定的提示词策略，请先解绑。",
+    "dependencyProgramBinding": "存在绑定的程序策略，请先解绑。",
+    "dependencyOpenPosition": "存在未平仓位，请先平仓。",
+    "dependencySignalPool": "该信号被信号池引用，请先移除。",
+    "dependencyActiveBinding": "已绑定到 AI Trader，请先解绑。",
+    "dependencyBindingActive": "该绑定当前处于激活状态，请先停用。"
   },
   "regime": {
     "noConfig": "未找到配置",
@@ -495,7 +502,10 @@
     "step3": "启动自动交易",
     "aiTraders": "AI交易员",
     "strategyConfig": "策略配置",
-    "createTraderHint": "创建AI交易员以配置策略"
+    "createTraderHint": "创建AI交易员以配置策略",
+    "deleteTrader": "删除 Trader",
+    "confirmDeleteTitle": "删除 AI Trader",
+    "confirmDeleteDesc": "确定删除吗？关联的钱包配置将被停用。"
   },
   "settings": {
     "title": "设置",

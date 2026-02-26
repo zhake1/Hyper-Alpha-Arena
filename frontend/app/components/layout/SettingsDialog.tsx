@@ -49,6 +49,23 @@ interface AIAccountCreate extends TradingAccountCreate {
   api_key?: string
 }
 
+function formatDependencies(deps: string[], t: (key: string) => string): string {
+  const keyMap: [RegExp, string][] = [
+    [/Prompt binding/i, 'common.dependencyPromptBinding'],
+    [/Program binding/i, 'common.dependencyProgramBinding'],
+    [/Open position/i, 'common.dependencyOpenPosition'],
+    [/Signal Pool/i, 'common.dependencySignalPool'],
+    [/Bound to.*Trader/i, 'common.dependencyActiveBinding'],
+    [/is currently active/i, 'common.dependencyBindingActive'],
+  ]
+  const messages = new Set<string>()
+  for (const dep of deps) {
+    const match = keyMap.find(([re]) => re.test(dep))
+    messages.add(match ? t(match[1]) : dep)
+  }
+  return Array.from(messages).join(' ')
+}
+
 export default function SettingsDialog({ open, onOpenChange, onAccountUpdated, embedded = false }: SettingsDialogProps) {
   const { t } = useTranslation()
   const [accounts, setAccounts] = useState<AIAccount[]>([])
@@ -367,6 +384,26 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated, e
     onAccountUpdated?.()
   }
 
+  const handleDeleteTrader = async (account: AIAccount) => {
+    if (!confirm(t('trader.confirmDeleteDesc'))) return
+    try {
+      const res = await fetch(`/api/account/${account.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (res.ok && data.deleted) {
+        toast.success(t('common.delete') + ' OK')
+        loadAccounts()
+        onAccountUpdated?.()
+      } else if (data.dependencies) {
+        const msg = formatDependencies(data.dependencies, t)
+        toast.error(`${t('common.cannotDelete')}: ${msg}`, { duration: 5000 })
+      } else {
+        toast.error(data.error || data.detail || 'Failed to delete')
+      }
+    } catch {
+      toast.error('Failed to delete trader')
+    }
+  }
+
   const content = (
     <>
       {!embedded && (
@@ -559,6 +596,15 @@ export default function SettingsDialog({ open, onOpenChange, onAccountUpdated, e
                                 size="sm"
                               >
                                 <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                onClick={() => handleDeleteTrader(account)}
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                title={t('trader.deleteTrader')}
+                              >
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
                           </div>

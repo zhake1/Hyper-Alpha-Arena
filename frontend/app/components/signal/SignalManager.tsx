@@ -131,9 +131,9 @@ async function updateSignal(id: number, data: Partial<SignalDefinition>): Promis
   return res.json()
 }
 
-async function deleteSignal(id: number): Promise<void> {
+async function deleteSignal(id: number): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/definitions/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete signal')
+  return res.json()
 }
 
 async function createPool(data: Partial<SignalPool>): Promise<SignalPool> {
@@ -156,9 +156,9 @@ async function updatePool(id: number, data: Partial<SignalPool>): Promise<Signal
   return res.json()
 }
 
-async function deletePool(id: number): Promise<void> {
+async function deletePool(id: number): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/pools/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('Failed to delete pool')
+  return res.json()
 }
 
 // Create signal pool from AI-generated config
@@ -325,6 +325,22 @@ const TIME_WINDOWS = [
   { value: '4h', label: '4 hours', desc: 'Very long-term, major moves only' },
 ]
 // Symbols are now loaded dynamically from Hyperliquid watchlist (see watchlistSymbols state)
+
+function formatDeps(deps: string[], t: (key: string) => string): string {
+  const keyMap: [RegExp, string][] = [
+    [/Signal Pool/i, 'common.dependencySignalPool'],
+    [/Bound to.*Trader/i, 'common.dependencyActiveBinding'],
+    [/Program Binding/i, 'common.dependencyProgramBinding'],
+    [/AI Strategy/i, 'common.dependencyActiveBinding'],
+    [/TriggerConfig/i, 'common.dependencyActiveBinding'],
+  ]
+  const messages = new Set<string>()
+  for (const dep of deps) {
+    const match = keyMap.find(([re]) => re.test(dep))
+    messages.add(match ? t(match[1]) : dep)
+  }
+  return Array.from(messages).join(' ')
+}
 
 export default function SignalManager() {
   const { t } = useTranslation()
@@ -691,9 +707,16 @@ export default function SignalManager() {
   const handleDeleteSignal = async (id: number) => {
     if (!confirm('Delete this signal?')) return
     try {
-      await deleteSignal(id)
-      toast.success('Signal deleted')
-      refreshDataSilently()
+      const data = await deleteSignal(id)
+      if (data.deleted) {
+        toast.success('Signal deleted')
+        refreshDataSilently()
+      } else if (data.dependencies) {
+        const msg = formatDeps(data.dependencies as string[], t)
+        toast.error(`${t('common.cannotDelete')}: ${msg}`, { duration: 5000 })
+      } else {
+        toast.error((data.error as string) || 'Failed to delete signal')
+      }
     } catch (err) {
       toast.error('Failed to delete signal')
     }
@@ -1070,9 +1093,16 @@ export default function SignalManager() {
   const handleDeletePool = async (id: number) => {
     if (!confirm('Delete this pool?')) return
     try {
-      await deletePool(id)
-      toast.success('Pool deleted')
-      refreshDataSilently()
+      const data = await deletePool(id)
+      if (data.deleted) {
+        toast.success('Pool deleted')
+        refreshDataSilently()
+      } else if (data.dependencies) {
+        const msg = formatDeps(data.dependencies as string[], t)
+        toast.error(`${t('common.cannotDelete')}: ${msg}`, { duration: 5000 })
+      } else {
+        toast.error((data.error as string) || 'Failed to delete pool')
+      }
     } catch (err) {
       toast.error('Failed to delete pool')
     }

@@ -110,6 +110,19 @@ const DEFAULT_CODE = `class MyStrategy:
         return Decision(action=ActionType.HOLD, symbol=data.trigger_symbol)
 `
 
+function formatDeps(deps: string[], t: (key: string) => string): string {
+  const keyMap: [RegExp, string][] = [
+    [/Bound to.*Trader/i, 'common.dependencyActiveBinding'],
+    [/is currently active/i, 'common.dependencyBindingActive'],
+  ]
+  const messages = new Set<string>()
+  for (const dep of deps) {
+    const match = keyMap.find(([re]) => re.test(dep))
+    messages.add(match ? t(match[1]) : dep)
+  }
+  return Array.from(messages).join(' ')
+}
+
 export default function ProgramTrader() {
   const { t, i18n } = useTranslation()
   const [programs, setPrograms] = useState<Program[]>([])
@@ -376,10 +389,16 @@ export default function ProgramTrader() {
     if (!confirm('Delete this binding?')) return
     try {
       const res = await fetch(`${API_BASE}bindings/${bindingId}`, { method: 'DELETE' })
-      if (res.ok) {
+      const data = await res.json()
+      if (data.deleted) {
         toast.success('Binding deleted')
         fetchAllBindings()
         fetchPrograms()
+      } else if (data.dependencies) {
+        const msg = formatDeps(data.dependencies as string[], t)
+        toast.error(`${t('common.cannotDelete')}: ${msg}`, { duration: 5000 })
+      } else {
+        toast.error(data.error || 'Failed to delete binding')
       }
     } catch (err) {
       toast.error('Failed to delete binding')
@@ -542,16 +561,19 @@ export default function ProgramTrader() {
     if (!confirm(t('programTrader.confirmDelete'))) return
     try {
       const res = await fetch(`${API_BASE}${id}`, { method: 'DELETE' })
-      if (res.ok) {
+      const data = await res.json()
+      if (data.deleted) {
         toast.success(t('common.delete') + ' OK')
         fetchPrograms()
         if (selectedProgram?.id === id) {
           setSelectedProgram(null)
           resetForm()
         }
+      } else if (data.dependencies) {
+        const msg = formatDeps(data.dependencies as string[], t)
+        toast.error(`${t('common.cannotDelete')}: ${msg}`, { duration: 5000 })
       } else {
-        const err = await res.json()
-        toast.error(err.detail || 'Failed to delete')
+        toast.error(data.error || data.detail || 'Failed to delete')
       }
     } catch (err) {
       toast.error('Failed to delete program')

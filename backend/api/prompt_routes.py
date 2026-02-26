@@ -131,13 +131,13 @@ def copy_prompt_template(
 
 
 @router.delete("/{template_id}")
-def delete_prompt_template(template_id: int, db: Session = Depends(get_db)) -> dict:
-    """Soft delete a prompt template"""
-    try:
-        prompt_repo.soft_delete_template(db, template_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"message": "Template deleted"}
+def delete_prompt_template_endpoint(template_id: int, db: Session = Depends(get_db)) -> dict:
+    """Soft delete a prompt template with dependency checking."""
+    from services.entity_deletion_service import delete_prompt_template
+    result = delete_prompt_template(db, template_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Template not found"))
+    return result
 
 
 @router.patch(
@@ -211,12 +211,13 @@ def upsert_prompt_binding(
 
 
 @router.delete("/bindings/{binding_id}")
-def delete_prompt_binding(binding_id: int, db: Session = Depends(get_db)) -> dict:
-    try:
-        prompt_repo.delete_binding(db, binding_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"message": "Binding deleted"}
+def delete_prompt_binding_endpoint(binding_id: int, db: Session = Depends(get_db)) -> dict:
+    """Soft delete a prompt binding."""
+    from services.entity_deletion_service import delete_prompt_binding
+    result = delete_prompt_binding(db, binding_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Binding not found"))
+    return result
 
 
 @router.post("/preview")
@@ -642,7 +643,7 @@ def ai_chat(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Get AI Trader account
-    account = db.query(Account).filter(Account.id == request.account_id).first()
+    account = db.query(Account).filter(Account.id == request.account_id, Account.is_deleted != True).first()
     if not account:
         raise HTTPException(status_code=404, detail="AI Trader not found")
 
@@ -692,7 +693,7 @@ def ai_chat_stream(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Get AI Trader account
-    account = db.query(Account).filter(Account.id == request.account_id).first()
+    account = db.query(Account).filter(Account.id == request.account_id, Account.is_deleted != True).first()
     if not account:
         raise HTTPException(status_code=404, detail="AI Trader not found")
 
@@ -724,7 +725,7 @@ def ai_chat_stream(
             # Create new db session for background thread
             bg_db = SessionLocal()
             try:
-                bg_account = bg_db.query(Account).filter(Account.id == account_id).first()
+                bg_account = bg_db.query(Account).filter(Account.id == account_id, Account.is_deleted != True).first()
                 yield from generate_prompt_with_ai_stream(
                     db=bg_db,
                     account=bg_account,
@@ -828,7 +829,7 @@ def get_conversation_messages_api(
     token_model = None
     api_format = "openai"
     if account_id:
-        acct = db.query(Account).filter(Account.id == account_id).first()
+        acct = db.query(Account).filter(Account.id == account_id, Account.is_deleted != True).first()
         if acct and acct.model:
             token_model = acct.model
             from services.ai_decision_service import detect_api_format

@@ -44,7 +44,7 @@ def list_signals(db: Session = Depends(get_db)) -> SignalListResponse:
 
     signals_result = db.execute(text("""
         SELECT id, signal_name, description, trigger_condition, enabled, created_at, updated_at, exchange
-        FROM signal_definitions ORDER BY id
+        FROM signal_definitions WHERE (is_deleted IS NULL OR is_deleted = false) ORDER BY id
     """))
     signals = []
     for row in signals_result:
@@ -60,7 +60,7 @@ def list_signals(db: Session = Depends(get_db)) -> SignalListResponse:
 
     pools_result = db.execute(text("""
         SELECT id, pool_name, signal_ids, symbols, enabled, created_at, logic, exchange
-        FROM signal_pools ORDER BY id
+        FROM signal_pools WHERE (is_deleted IS NULL OR is_deleted = false) ORDER BY id
     """))
     pools = []
     for row in pools_result:
@@ -113,7 +113,7 @@ def get_signal(signal_id: int, db: Session = Depends(get_db)):
     import json
     result = db.execute(text("""
         SELECT id, signal_name, description, trigger_condition, enabled, created_at, updated_at, exchange
-        FROM signal_definitions WHERE id = :id
+        FROM signal_definitions WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false)
     """), {"id": signal_id})
     row = result.fetchone()
     if not row:
@@ -155,7 +155,7 @@ def update_signal(signal_id: int, payload: SignalDefinitionUpdate, db: Session =
         raise HTTPException(status_code=400, detail="No fields to update")
 
     updates.append("updated_at = CURRENT_TIMESTAMP")
-    query = f"UPDATE signal_definitions SET {', '.join(updates)} WHERE id = :id RETURNING id, signal_name, description, trigger_condition, enabled, created_at, updated_at, exchange"
+    query = f"UPDATE signal_definitions SET {', '.join(updates)} WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false) RETURNING id, signal_name, description, trigger_condition, enabled, created_at, updated_at, exchange"
     result = db.execute(text(query), params)
     db.commit()
     row = result.fetchone()
@@ -173,12 +173,12 @@ def update_signal(signal_id: int, payload: SignalDefinitionUpdate, db: Session =
 
 @router.delete("/definitions/{signal_id}")
 def delete_signal(signal_id: int, db: Session = Depends(get_db)):
-    """Delete a signal definition"""
-    result = db.execute(text("DELETE FROM signal_definitions WHERE id = :id"), {"id": signal_id})
-    db.commit()
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Signal not found")
-    return {"message": "Signal deleted successfully"}
+    """Soft-delete a signal definition with dependency checking."""
+    from services.entity_deletion_service import delete_signal_definition
+    result = delete_signal_definition(db, signal_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Signal not found"))
+    return result
 
 
 # ============ Signal Pools ============
@@ -191,7 +191,7 @@ def create_pool(payload: SignalPoolCreate, db: Session = Depends(get_db)):
     # Validate that all signals belong to the same exchange as the pool
     if payload.signal_ids:
         result = db.execute(text("""
-            SELECT id, exchange FROM signal_definitions WHERE id = ANY(:ids)
+            SELECT id, exchange FROM signal_definitions WHERE id = ANY(:ids) AND (is_deleted IS NULL OR is_deleted = false)
         """), {"ids": payload.signal_ids})
         for row in result.fetchall():
             signal_exchange = row[1] or "hyperliquid"
@@ -234,7 +234,7 @@ def get_pool(pool_id: int, db: Session = Depends(get_db)):
     import json
     result = db.execute(text("""
         SELECT id, pool_name, signal_ids, symbols, enabled, created_at, logic, exchange
-        FROM signal_pools WHERE id = :id
+        FROM signal_pools WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false)
     """), {"id": pool_id})
     row = result.fetchone()
     if not row:
@@ -260,7 +260,7 @@ def update_pool(pool_id: int, payload: SignalPoolUpdate, db: Session = Depends(g
     # Get current pool exchange if not being updated
     target_exchange = payload.exchange
     if target_exchange is None:
-        current = db.execute(text("SELECT exchange FROM signal_pools WHERE id = :id"), {"id": pool_id}).fetchone()
+        current = db.execute(text("SELECT exchange FROM signal_pools WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false)"), {"id": pool_id}).fetchone()
         if current:
             target_exchange = current[0] or "hyperliquid"
 
@@ -268,7 +268,7 @@ def update_pool(pool_id: int, payload: SignalPoolUpdate, db: Session = Depends(g
     signal_ids_to_check = payload.signal_ids
     if signal_ids_to_check and target_exchange:
         result = db.execute(text("""
-            SELECT id, exchange FROM signal_definitions WHERE id = ANY(:ids)
+            SELECT id, exchange FROM signal_definitions WHERE id = ANY(:ids) AND (is_deleted IS NULL OR is_deleted = false)
         """), {"ids": signal_ids_to_check})
         for row in result.fetchall():
             signal_exchange = row[1] or "hyperliquid"
@@ -302,7 +302,7 @@ def update_pool(pool_id: int, payload: SignalPoolUpdate, db: Session = Depends(g
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    query = f"UPDATE signal_pools SET {', '.join(updates)} WHERE id = :id RETURNING id, pool_name, signal_ids, symbols, enabled, created_at, logic, exchange"
+    query = f"UPDATE signal_pools SET {', '.join(updates)} WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false) RETURNING id, pool_name, signal_ids, symbols, enabled, created_at, logic, exchange"
     result = db.execute(text(query), params)
     db.commit()
     row = result.fetchone()
@@ -323,12 +323,12 @@ def update_pool(pool_id: int, payload: SignalPoolUpdate, db: Session = Depends(g
 
 @router.delete("/pools/{pool_id}")
 def delete_pool(pool_id: int, db: Session = Depends(get_db)):
-    """Delete a signal pool"""
-    result = db.execute(text("DELETE FROM signal_pools WHERE id = :id"), {"id": pool_id})
-    db.commit()
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Pool not found")
-    return {"message": "Pool deleted successfully"}
+    """Soft-delete a signal pool with dependency checking."""
+    from services.entity_deletion_service import delete_signal_pool
+    result = delete_signal_pool(db, pool_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Pool not found"))
+    return result
 
 
 # ============ Metric Analysis ============
@@ -534,7 +534,7 @@ def test_signal(
     # Get signal definition
     result = db.execute(text("""
         SELECT id, signal_name, description, trigger_condition, enabled
-        FROM signal_definitions WHERE id = :id
+        FROM signal_definitions WHERE id = :id AND (is_deleted IS NULL OR is_deleted = false)
     """), {"id": signal_id})
     row = result.fetchone()
     if not row:
@@ -750,7 +750,7 @@ def get_ai_signal_conversation_messages(
     api_format = "openai"
     if account_id:
         from database.models import Account
-        acct = db.query(Account).filter(Account.id == account_id).first()
+        acct = db.query(Account).filter(Account.id == account_id, Account.is_deleted != True).first()
         if acct and acct.model:
             token_model = acct.model
             from services.ai_decision_service import detect_api_format

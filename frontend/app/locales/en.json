@@ -37,7 +37,14 @@
     "loadMore": "Load More",
     "keyboardHintCtrlEnter": "Press Ctrl+Enter (Cmd+Enter on Mac) to send",
     "recommended": "Recommended",
-    "skip": "Skip"
+    "skip": "Skip",
+    "cannotDelete": "Cannot delete",
+    "dependencyPromptBinding": "This has a bound prompt strategy. Please unbind it first.",
+    "dependencyProgramBinding": "This has bound program strategies. Please unbind them first.",
+    "dependencyOpenPosition": "There are open positions. Please close them first.",
+    "dependencySignalPool": "This signal is used in signal pools. Please remove it first.",
+    "dependencyActiveBinding": "This is bound to AI Traders. Please unbind first.",
+    "dependencyBindingActive": "This binding is currently active. Please deactivate it first."
   },
   "regime": {
     "noConfig": "No configuration found",
@@ -574,7 +581,10 @@
     "step3": "Start automated trading",
     "aiTraders": "AI Traders",
     "strategyConfig": "Strategy Configuration",
-    "createTraderHint": "Create an AI trader to configure strategies"
+    "createTraderHint": "Create an AI trader to configure strategies",
+    "deleteTrader": "Delete Trader",
+    "confirmDeleteTitle": "Delete AI Trader",
+    "confirmDeleteDesc": "Are you sure? This will deactivate associated wallets."
   },
   "settings": {
     "title": "Settings",
