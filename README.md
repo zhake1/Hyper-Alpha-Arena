@@ -72,6 +72,14 @@ What sets Hyper Alpha Arena apart is its multi-agent AI system. Instead of a sin
 
 Each agent has deep context about its domain and access to relevant tools. Hyper AI can call market data APIs, check positions, and retrieve kline data in real-time—turning natural conversation into actionable trading intelligence.
 
+**📱 Mobile Access** — Hyper AI is also available via Telegram and Discord. Same AI, same tools, plus proactive trade alerts pushed to your phone.
+
+| Platform | Status |
+|----------|--------|
+| Telegram | ✅ |
+| Discord | ✅ |
+| WhatsApp | 🔜 |
+
 ### Skill System — Zero Learning Curve
 
 Hyper AI comes with built-in Skills: modular, step-by-step workflow guides that walk you through complex tasks. Type a `/command` or just describe what you want—the AI loads the right skill automatically.
