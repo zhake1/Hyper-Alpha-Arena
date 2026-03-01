@@ -562,68 +562,118 @@ Trade #${tradeData.trade.id} ${tradeData.trade.symbol}:
       })
 
       if (!response.ok) throw new Error('Failed to send message')
-      if (!response.body) throw new Error('No response body')
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let currentEventType = ''
 
       // Add streaming assistant message
       setMessages(prev => [...prev, { role: 'assistant', content: '', isStreaming: true, analysisLog: [] }])
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      let finalContent = ''
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+      // Check if response is JSON (background task mode) or SSE stream
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        // Background task mode: poll for results
+        const taskData = await response.json()
+        const taskId = taskData.task_id
 
-        for (const line of lines) {
-          // Parse SSE event type line
-          if (line.startsWith('event: ')) {
-            currentEventType = line.slice(7).trim()
-            continue
-          }
-          // Parse SSE data line
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
+        const { pollAiStream } = await import('@/lib/pollAiStream')
+        await pollAiStream(taskId, {
+          onChunk: (chunk) => {
+            const eventType = chunk.event_type
+            const data = chunk.data
 
-              if (currentEventType === 'reasoning') {
-                const entry: AnalysisEntry = { type: 'reasoning', content: data.content }
-                setMessages(prev => prev.map((m, i) =>
-                  i === prev.length - 1 ? { ...m, statusText: 'Thinking...', analysisLog: [...(m.analysisLog || []), entry] } : m
-                ))
-              } else if (currentEventType === 'tool_call') {
-                const entry: AnalysisEntry = { type: 'tool_call', name: data.name }
-                setMessages(prev => prev.map((m, i) =>
-                  i === prev.length - 1 ? { ...m, statusText: `Calling ${data.name}...`, analysisLog: [...(m.analysisLog || []), entry] } : m
-                ))
-              } else if (currentEventType === 'tool_result') {
-                const entry: AnalysisEntry = { type: 'tool_result', name: data.name }
-                setMessages(prev => prev.map((m, i) =>
-                  i === prev.length - 1 ? { ...m, statusText: `Got result from ${data.name}`, analysisLog: [...(m.analysisLog || []), entry] } : m
-                ))
-              } else if (currentEventType === 'content' || data.content) {
-                setMessages(prev => prev.map((m, i) =>
-                  i === prev.length - 1 ? { ...m, content: data.content, statusText: undefined } : m
-                ))
+            if (eventType === 'reasoning') {
+              const entry: AnalysisEntry = { type: 'reasoning', content: data.content }
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, statusText: 'Thinking...', analysisLog: [...(m.analysisLog || []), entry] } : m
+              ))
+            } else if (eventType === 'tool_call') {
+              const entry: AnalysisEntry = { type: 'tool_call', name: data.name }
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, statusText: `Calling ${data.name}...`, analysisLog: [...(m.analysisLog || []), entry] } : m
+              ))
+            } else if (eventType === 'tool_result') {
+              const entry: AnalysisEntry = { type: 'tool_result', name: data.name }
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, statusText: `Got result from ${data.name}`, analysisLog: [...(m.analysisLog || []), entry] } : m
+              ))
+            } else if (eventType === 'content' || eventType === 'done') {
+              finalContent = data.content || ''
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, content: finalContent, statusText: undefined } : m
+              ))
+            }
+          },
+          onTaskLost: () => {
+            setMessages(prev => prev.map((m, i) =>
+              i === prev.length - 1 ? { ...m, content: 'Connection lost. Please try again.', isStreaming: false } : m
+            ))
+          },
+        })
+
+        // Mark streaming complete
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 ? { ...m, content: finalContent, isStreaming: false, statusText: undefined } : m
+        ))
+      } else {
+        // SSE stream mode (legacy fallback)
+        if (!response.body) throw new Error('No response body')
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let currentEventType = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEventType = line.slice(7).trim()
+              continue
+            }
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+
+                if (currentEventType === 'reasoning') {
+                  const entry: AnalysisEntry = { type: 'reasoning', content: data.content }
+                  setMessages(prev => prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, statusText: 'Thinking...', analysisLog: [...(m.analysisLog || []), entry] } : m
+                  ))
+                } else if (currentEventType === 'tool_call') {
+                  const entry: AnalysisEntry = { type: 'tool_call', name: data.name }
+                  setMessages(prev => prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, statusText: `Calling ${data.name}...`, analysisLog: [...(m.analysisLog || []), entry] } : m
+                  ))
+                } else if (currentEventType === 'tool_result') {
+                  const entry: AnalysisEntry = { type: 'tool_result', name: data.name }
+                  setMessages(prev => prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, statusText: `Got result from ${data.name}`, analysisLog: [...(m.analysisLog || []), entry] } : m
+                  ))
+                } else if (currentEventType === 'content' || data.content) {
+                  setMessages(prev => prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, content: data.content, statusText: undefined } : m
+                  ))
+                }
+
+                currentEventType = ''
+              } catch {
+                // Ignore parse errors
               }
-
-              currentEventType = '' // Reset after processing
-            } catch {
-              // Ignore parse errors
             }
           }
         }
-      }
 
-      // Mark streaming complete
-      setMessages(prev => prev.map((m, i) =>
-        i === prev.length - 1 ? { ...m, isStreaming: false, statusText: undefined } : m
-      ))
+        // Mark streaming complete
+        setMessages(prev => prev.map((m, i) =>
+          i === prev.length - 1 ? { ...m, isStreaming: false, statusText: undefined } : m
+        ))
+      }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${err instanceof Error ? err.message : 'Unknown error'}` }])
     } finally {

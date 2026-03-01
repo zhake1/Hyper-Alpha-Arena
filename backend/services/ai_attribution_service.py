@@ -40,13 +40,11 @@ Before any analysis, you MUST confirm:
    - **hyperliquid**: Hyperliquid perpetual futures
    - **binance**: Binance USDT-M futures
 
-2. **Environment** (Hyperliquid only):
+2. **Environment** (for both exchanges):
    - **testnet**: Test network trades (paper trading, testing)
    - **mainnet**: Real money trades
 
-For Binance, environment is always mainnet (testnet not supported yet).
-
-Ask the user: "Which exchange do you want to analyze - Hyperliquid or Binance? For Hyperliquid, also specify testnet or mainnet."
+Ask the user: "Which exchange do you want to analyze - Hyperliquid or Binance? Also specify testnet or mainnet."
 Only proceed after getting a clear answer. Pass the exchange and environment parameters to ALL tool calls.
 
 ## ACCOUNT IDENTIFICATION
@@ -62,7 +60,7 @@ NEVER ask user for account ID directly. Instead, use `list_ai_accounts` and pres
 ## GUIDED CONVERSATION
 Before using analysis tools, confirm:
 1. Which exchange? (hyperliquid or binance) - REQUIRED
-2. Which environment? (testnet or mainnet, for Hyperliquid only) - REQUIRED for Hyperliquid
+2. Which environment? (testnet or mainnet) - REQUIRED for both exchanges
 3. Which account? (use `list_ai_accounts` to find by name)
 4. Time period? (default: 30 days)
 
@@ -137,7 +135,7 @@ def _define_tools():
                     "properties": {
                         "account_id": {"type": "integer", "description": "Account ID to analyze. Use 0 for all accounts."},
                         "exchange": {"type": "string", "enum": ["hyperliquid", "binance"], "description": "Exchange to analyze trades from. REQUIRED."},
-                        "environment": {"type": "string", "enum": ["testnet", "mainnet"], "description": "Trading environment (for Hyperliquid). Use 'mainnet' for Binance."},
+                        "environment": {"type": "string", "enum": ["testnet", "mainnet"], "description": "Trading environment. REQUIRED for both exchanges."},
                         "days": {"type": "integer", "description": "Number of days to analyze (7, 30, 90)", "default": 30}
                     },
                     "required": ["account_id", "exchange"]
@@ -196,7 +194,7 @@ def _define_tools():
                     "properties": {
                         "account_id": {"type": "integer", "description": "Account ID"},
                         "exchange": {"type": "string", "enum": ["hyperliquid", "binance"], "description": "Exchange to query trades from. REQUIRED."},
-                        "environment": {"type": "string", "enum": ["testnet", "mainnet"], "description": "Trading environment (for Hyperliquid). Use 'mainnet' for Binance."},
+                        "environment": {"type": "string", "enum": ["testnet", "mainnet"], "description": "Trading environment. REQUIRED for both exchanges."},
                         "limit": {"type": "integer", "description": "Number of recent trades to fetch", "default": 10},
                         "filter_type": {"type": "string", "enum": ["all", "wins", "losses"], "description": "Filter by trade outcome"}
                     },
@@ -312,11 +310,8 @@ def _tool_get_attribution_summary(db: Session, args: Dict) -> str:
     if not exchange:
         return json.dumps({"error": "exchange is required (hyperliquid or binance)"})
 
-    # For Binance, environment is always mainnet
-    if exchange == "binance":
-        environment = "mainnet"
-    elif not environment:
-        return json.dumps({"error": "environment is required for Hyperliquid (testnet or mainnet)"})
+    if not environment:
+        return json.dumps({"error": "environment is required (testnet or mainnet)"})
 
     start_date = datetime.now() - timedelta(days=days)
 
@@ -539,11 +534,8 @@ def _tool_get_trade_decision_chain(db: Session, args: Dict) -> str:
     if not exchange:
         return json.dumps({"error": "exchange is required (hyperliquid or binance)"})
 
-    # For Binance, environment is always mainnet
-    if exchange == "binance":
-        environment = "mainnet"
-    elif not environment:
-        return json.dumps({"error": "environment is required for Hyperliquid (testnet or mainnet)"})
+    if not environment:
+        return json.dumps({"error": "environment is required (testnet or mainnet)"})
 
     query = db.query(AIDecisionLog).filter(
         AIDecisionLog.account_id == account_id,
