@@ -381,21 +381,22 @@ HYPER_AI_TOOLS = [
         "type": "function",
         "function": {
             "name": "bind_program_to_trader",
-            "description": "Create a program binding for an AI Trader with trigger config (many-to-many).",
+            "description": "Create a program binding for an AI Trader with trigger config (many-to-many). IMPORTANT: exchange must match signal_pool exchange.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "trader_id": {"type": "integer", "description": "AI Trader ID"},
                     "program_id": {"type": "integer", "description": "Trading program ID"},
+                    "exchange": {"type": "string", "enum": ["hyperliquid", "binance"], "description": "Exchange to trade on (REQUIRED). Must match signal_pool exchange."},
                     "signal_pool_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "Signal pool IDs for triggering"
+                        "description": "Signal pool IDs for triggering. Their exchange must match the binding exchange."
                     },
                     "trigger_interval": {"type": "integer", "description": "Scheduled trigger interval in seconds (default: 300)"},
                     "is_active": {"type": "boolean", "description": "Whether binding is active (default: true)"}
                 },
-                "required": ["trader_id", "program_id"]
+                "required": ["trader_id", "program_id", "exchange"]
             }
         }
     },
@@ -1877,8 +1878,50 @@ def execute_bind_prompt_to_trader(db: Session, trader_id: int, prompt_id: int) -
         return json.dumps({"error": str(e)})
 
 
+def _validate_signal_pool_exchange_consistency(
+    db: Session, binding_exchange: str, signal_pool_ids: list
+) -> dict:
+    """
+    Validate that signal pool exchanges match the binding's target exchange.
+    Returns {"valid": True} or {"valid": False, "error": "...", "details": {...}}
+    """
+    from database.models import SignalPool
+
+    if not signal_pool_ids:
+        return {"valid": True}
+
+    # Get signal pool exchanges
+    pools = db.query(SignalPool).filter(
+        SignalPool.id.in_(signal_pool_ids),
+        SignalPool.is_deleted != True
+    ).all()
+
+    # Check for mismatches
+    mismatched = []
+    for pool in pools:
+        pool_exchange = pool.exchange or "hyperliquid"
+        if pool_exchange != binding_exchange:
+            mismatched.append({
+                "pool_id": pool.id,
+                "pool_name": pool.pool_name,
+                "pool_exchange": pool_exchange,
+                "binding_exchange": binding_exchange
+            })
+
+    if mismatched:
+        return {
+            "valid": False,
+            "error": f"Exchange mismatch: Signal pool(s) exchange does not match binding's target exchange '{binding_exchange}'.",
+            "mismatched_pools": mismatched,
+            "suggestion": f"Use signal pools with exchange='{binding_exchange}', or change the binding exchange to match the signal pools."
+        }
+
+    return {"valid": True}
+
+
 def execute_bind_program_to_trader(
     db: Session, trader_id: int, program_id: int,
+    exchange: str = "hyperliquid",
     signal_pool_ids: list = None, trigger_interval: int = 300,
     is_active: bool = True
 ) -> str:
@@ -1893,6 +1936,12 @@ def execute_bind_program_to_trader(
         program = db.get(TradingProgram, program_id)
         if not program:
             return json.dumps({"error": f"Program {program_id} not found"})
+
+        # Validate signal pool exchange consistency with binding exchange
+        if signal_pool_ids:
+            validation = _validate_signal_pool_exchange_consistency(db, exchange, signal_pool_ids)
+            if not validation.get("valid"):
+                return json.dumps(validation)
 
         # Check duplicate
         existing = db.query(AccountProgramBinding).filter(
@@ -1911,7 +1960,8 @@ def execute_bind_program_to_trader(
             program_id=program_id,
             signal_pool_ids=json.dumps(signal_pool_ids) if signal_pool_ids else None,
             trigger_interval=trigger_interval,
-            is_active=is_active
+            is_active=is_active,
+            exchange=exchange
         )
         db.add(binding)
         db.commit()
@@ -1949,6 +1999,9 @@ def execute_update_trader_strategy(
         account = db.query(Account).filter(Account.id == trader_id, Account.is_deleted != True).first()
         if not account:
             return json.dumps({"error": f"AI Trader {trader_id} not found"})
+
+        # Note: For Prompt Trader, exchange is determined by wallet, not by strategy config.
+        # Signal pool exchange validation is done at Program Binding level.
 
         strategy = upsert_strategy(
             db,
@@ -2368,6 +2421,7 @@ def execute_hyper_ai_tool(
                 db,
                 trader_id=arguments.get("trader_id"),
                 program_id=arguments.get("program_id"),
+                exchange=arguments.get("exchange", "hyperliquid"),
                 signal_pool_ids=arguments.get("signal_pool_ids"),
                 trigger_interval=arguments.get("trigger_interval", 300),
                 is_active=arguments.get("is_active", True)

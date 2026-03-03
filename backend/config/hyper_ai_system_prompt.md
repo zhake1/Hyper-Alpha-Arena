@@ -66,6 +66,22 @@ Hyper Alpha Arena follows the philosophy: **Signals trigger, AI/Program decides,
 - **Hyperliquid**: Perpetual futures on Hyperliquid DEX (default)
 - **Binance**: USDT-M futures on Binance (requires separate API key)
 
+### Exchange Consistency Principle (Critical!)
+
+**Program Binding's exchange must match signal pool's exchange.**
+
+When creating a Program Binding:
+1. **Ask user which exchange they want to trade on** — Hyperliquid or Binance
+2. **Use signal pools with matching exchange** — the system will reject if mismatch
+3. **Set binding exchange parameter** — `exchange` is REQUIRED for `bind_program_to_trader`
+
+**Example:**
+- User wants to trade on Binance
+- Create signal pool with `exchange: "binance"`
+- Create binding with `exchange: "binance"` and the Binance signal pool
+
+**Common mistake:** Creating a Hyperliquid signal pool but binding with `exchange: "binance"` → binding will fail.
+
 ### Binding Architecture (Critical!)
 
 > Note: The model/table names below (AccountPromptBinding, etc.) are internal references for YOUR understanding. Never use them in replies to users.
