@@ -126,8 +126,8 @@ def _render_table_as_code(table_lines: List[str]) -> str:
     # Parse table into rows of cells
     rows = []
     for line in table_lines:
-        # Skip separator lines (|---|---|)
-        if re.match(r'^\|?[\s:|-]+\|?$', line.strip()):
+        # Skip separator lines (|---|---|) - require | on both sides
+        if re.match(r'^\|[\s:|-]+\|$', line.strip()):
             continue
 
         # Split by | and clean
@@ -179,6 +179,7 @@ def _render_table_as_code(table_lines: List[str]) -> str:
 def _convert_tables_to_pre(text: str) -> str:
     """
     Pre-process: Convert markdown tables to fenced code blocks with proper alignment.
+    Skips content already inside code blocks to avoid double-wrapping.
     """
     if '|' not in text:
         return text
@@ -187,22 +188,42 @@ def _convert_tables_to_pre(text: str) -> str:
     result = []
     table_lines = []
     in_table = False
+    in_code_block = False
 
     for line in lines:
         stripped = line.strip()
-        # Detect table line: starts/ends with | or is separator line
+
+        # Track code block state - skip everything inside
+        if stripped.startswith('```'):
+            in_code_block = not in_code_block
+            if in_table and table_lines:
+                formatted_table = _render_table_as_code(table_lines)
+                if formatted_table:
+                    result.append('```')
+                    result.append(formatted_table)
+                    result.append('```')
+                table_lines = []
+                in_table = False
+            result.append(line)
+            continue
+
+        if in_code_block:
+            result.append(line)
+            continue
+
+        # Detect table line: must contain | and start or end with |
+        # This avoids matching --- (thematic breaks) as table separators
         is_table = (
-            stripped.startswith('|') or
-            stripped.endswith('|') or
-            re.match(r'^\|?[\s:|-]+\|?$', stripped)
-        ) and '|' in stripped and stripped != '|'
+            '|' in stripped
+            and (stripped.startswith('|') or stripped.endswith('|'))
+            and len(stripped) > 1
+        )
 
         if is_table:
             table_lines.append(line)
             in_table = True
         else:
             if in_table and table_lines:
-                # Render table with proper alignment
                 formatted_table = _render_table_as_code(table_lines)
                 if formatted_table:
                     result.append('```')
@@ -235,8 +256,7 @@ def markdown_to_telegram_html(text: str) -> str:
         # Pre-process: convert tables to code blocks with proper alignment
         text = _convert_tables_to_pre(text)
 
-        # Pre-process: convert --- thematic breaks to unicode line
-        text = re.sub(r'^---+$', '—' * 20, text, flags=re.MULTILINE)
+        # Thematic breaks (---) are handled by mistune's thematic_break() renderer
 
         if HAS_MISTUNE:
             renderer = TelegramHTMLRenderer()
