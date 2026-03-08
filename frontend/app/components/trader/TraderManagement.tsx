@@ -7,6 +7,8 @@ import { getAccounts, TradingAccount } from '@/lib/api'
 
 export default function TraderManagement() {
   const { t } = useTranslation()
+  const isAiTraderEmbed = typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('embed') === 'ai-trader'
   const [accounts, setAccounts] = useState<TradingAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -118,6 +120,31 @@ export default function TraderManagement() {
     )
   }
 
+  if (isAiTraderEmbed) {
+    return (
+      <div className="w-full min-h-full overflow-y-auto flex flex-col gap-4 p-6">
+        <div className="flex-shrink-0">
+          <h1 className="text-2xl font-bold">{t('trader.title', 'AI Trader Management')}</h1>
+          <p className="text-muted-foreground">{t('trader.subtitle', 'Manage your AI traders and configure trading strategies')}</p>
+        </div>
+
+        <Card className="flex flex-col">
+          <CardHeader>
+            <CardTitle>{t('trader.aiTraders', 'AI Traders')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SettingsDialog
+              open={true}
+              onOpenChange={() => {}}
+              onAccountUpdated={handleAccountUpdated}
+              embedded={true}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="h-full w-full overflow-hidden flex flex-col gap-4 p-6">
       <div className="flex-shrink-0">
@@ -125,13 +152,13 @@ export default function TraderManagement() {
         <p className="text-muted-foreground">{t('trader.subtitle', 'Manage your AI traders and configure trading strategies')}</p>
       </div>
 
-      <div className="flex-1 grid grid-cols-2 gap-6 overflow-hidden">
+      <div className="flex-1 grid grid-cols-2 gap-6 overflow-hidden min-h-0">
         {/* Left Side - Trader Management */}
-        <Card className="flex flex-col overflow-hidden">
+        <Card className="flex flex-col overflow-hidden min-h-0">
           <CardHeader>
             <CardTitle>{t('trader.aiTraders', 'AI Traders')}</CardTitle>
           </CardHeader>
-          <CardContent className="flex-1 overflow-hidden">
+          <CardContent className="flex-1 overflow-y-auto min-h-0">
             <SettingsDialog
               open={true}
               onOpenChange={() => {}}
@@ -142,7 +169,7 @@ export default function TraderManagement() {
         </Card>
 
         {/* Right Side - Strategy Settings */}
-        <Card className="flex flex-col overflow-hidden">
+        <Card className="flex flex-col overflow-hidden min-h-0">
           <CardHeader>
             <CardTitle>{t('trader.strategyConfig', 'Strategy Configuration')}</CardTitle>
           </CardHeader>

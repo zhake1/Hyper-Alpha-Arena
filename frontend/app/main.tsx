@@ -97,6 +97,7 @@ const PAGE_TITLES: Record<string, string> = {
 }
 
 function App() {
+  const isAiTraderEmbed = new URLSearchParams(window.location.search).get('embed') === 'ai-trader'
   const { tradingMode } = useTradingMode()
   const { setUser: setAuthUser } = useAuth()
   const [user, setUser] = useState<User | null>(null)
@@ -108,7 +109,9 @@ function App() {
   const [aiDecisions, setAiDecisions] = useState<AIDecision[]>([])
   const [allAssetCurves, setAllAssetCurves] = useState<any[]>([])
   const [hyperliquidRefreshKey, setHyperliquidRefreshKey] = useState(0)
-  const [currentPage, setCurrentPage] = useState<string>('hyper-ai')
+  const [currentPage, setCurrentPage] = useState<string>(
+    isAiTraderEmbed ? 'trader-management' : 'hyper-ai'
+  )
   const tradingModeRef = useRef(tradingMode)
 
   /**
@@ -127,9 +130,9 @@ function App() {
   }, [])
 
   // Hyper AI states - initialization happens during splash
-  const [showSplash, setShowSplash] = useState(true)
+  const [showSplash, setShowSplash] = useState(!isAiTraderEmbed)
   const [showOnboarding, setShowOnboarding] = useState(false)
-  const [initComplete, setInitComplete] = useState(false)
+  const [initComplete, setInitComplete] = useState(isAiTraderEmbed)
   const initStartedRef = useRef(false)
 
   // Check Hyper AI configuration during splash phase
@@ -146,6 +149,11 @@ function App() {
 
   // Stable callback for splash completion - does all init checks
   const handleSplashComplete = useCallback(async () => {
+    if (isAiTraderEmbed) {
+      setInitComplete(true)
+      setShowSplash(false)
+      return
+    }
     if (initStartedRef.current) return
     initStartedRef.current = true
 
@@ -153,7 +161,7 @@ function App() {
     setShowOnboarding(needsOnboarding)
     setInitComplete(true)
     setShowSplash(false)
-  }, [checkHyperAiConfig])
+  }, [checkHyperAiConfig, isAiTraderEmbed])
 
   const handleOnboardingComplete = () => {
     setShowOnboarding(false)
@@ -165,6 +173,8 @@ function App() {
 
   // Check URL hash and pathname for page routing
   useEffect(() => {
+    if (isAiTraderEmbed) return
+
     const hash = window.location.hash.slice(1)
     const pathname = window.location.pathname
 
@@ -286,7 +296,13 @@ function App() {
         setCurrentPage(pageName)
       }
     }
-  }, [])
+  }, [isAiTraderEmbed])
+
+  useEffect(() => {
+    if (isAiTraderEmbed && currentPage !== 'trader-management') {
+      setCurrentPage('trader-management')
+    }
+  }, [isAiTraderEmbed, currentPage])
   const [accountRefreshTrigger, setAccountRefreshTrigger] = useState<number>(0)
   const wsRef = useRef<WebSocket | null>(null)
   const [accounts, setAccounts] = useState<any[]>([])
@@ -713,7 +729,7 @@ function App() {
   }
 
   // Show onboarding if Hyper AI not configured
-  if (showOnboarding) {
+  if (showOnboarding && !isAiTraderEmbed) {
     return (
       <HyperAiOnboarding
         onComplete={handleOnboardingComplete}
@@ -732,8 +748,9 @@ function App() {
       }
     }
 
+    const shouldRemovePadding = currentPage === 'hyper-ai' || isAiTraderEmbed
     return (
-      <main className={`flex-1 overflow-hidden flex flex-col min-h-0 min-w-0 ${currentPage === 'hyper-ai' ? '' : 'p-4'}`}>
+      <main className={`flex-1 overflow-hidden flex flex-col min-h-0 min-w-0 ${shouldRemovePadding ? '' : 'p-4'}`}>
 
         {currentPage === 'hyper-ai' && (
           <HyperAiPage />
@@ -836,6 +853,22 @@ function App() {
   }
 
   const pageTitle = PAGE_TITLES[currentPage] ?? PAGE_TITLES.comprehensive
+
+  if (isAiTraderEmbed) {
+    return (
+      <>
+        <div className="h-screen w-screen overflow-hidden flex flex-col">
+          {renderMainContent()}
+        </div>
+        <AuthorizationModal
+          isOpen={authModalOpen}
+          onClose={handleAuthModalClose}
+          unauthorizedAccounts={unauthorizedAccounts}
+          onAuthorizationComplete={handleAuthorizationComplete}
+        />
+      </>
+    )
+  }
 
   return (
     <>
