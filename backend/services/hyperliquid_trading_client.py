@@ -98,15 +98,18 @@ class HyperliquidTradingClient:
     accidental cross-environment operations.
     """
 
-    def __init__(self, account_id: int, private_key: str, environment: str = "testnet", wallet_address: Optional[str] = None):
+    def __init__(self, account_id: int, private_key: str, environment: str = "testnet", wallet_address: Optional[str] = None,
+                 key_type: str = "private_key", master_wallet_address: Optional[str] = None):
         """
         Initialize trading client
 
         Args:
             account_id: Database account ID (for validation)
-            private_key: Hyperliquid private key (0x... format)
+            private_key: Hyperliquid private key (0x... format) - master key or agent key
             environment: "testnet" or "mainnet"
             wallet_address: Ethereum wallet address (derived from private key if not provided)
+            key_type: "private_key" (legacy) or "agent_key" (agent wallet mode)
+            master_wallet_address: Required for agent_key mode - the master wallet address for queries
 
         Raises:
             ValueError: If environment is invalid
@@ -116,6 +119,7 @@ class HyperliquidTradingClient:
 
         self.account_id = account_id
         self.environment = environment
+        self.key_type = key_type
 
         # Ensure private key has 0x prefix for consistency
         if not private_key.startswith('0x'):
@@ -123,7 +127,7 @@ class HyperliquidTradingClient:
         self.private_key = private_key
 
         import sys
-        print(f"[DEBUG __init__] account_id={account_id}, environment={environment}, wallet_address={wallet_address}", file=sys.stderr, flush=True)
+        print(f"[DEBUG __init__] account_id={account_id}, environment={environment}, wallet_address={wallet_address}, key_type={key_type}", file=sys.stderr, flush=True)
 
         # Derive wallet address from private key if not provided
         if not wallet_address:
@@ -144,7 +148,17 @@ class HyperliquidTradingClient:
         if not self.wallet_address:
             raise ValueError("Wallet address could not be derived from private key. Please check key format.")
 
-        logger.info(f"[FINAL] Using wallet address: {self.wallet_address}")
+        # For agent_key mode, query_address is the master wallet address
+        # For private_key mode, query_address is the same as wallet_address
+        if key_type == "agent_key":
+            if not master_wallet_address:
+                raise ValueError("master_wallet_address is required for agent_key mode")
+            self.query_address = master_wallet_address.lower()
+            logger.info(f"Agent key mode: signing_address={self.wallet_address}, query_address={self.query_address}")
+        else:
+            self.query_address = self.wallet_address
+
+        logger.info(f"[FINAL] Using wallet address: {self.wallet_address}, query_address: {self.query_address}")
 
         # Set API endpoint based on environment
         if environment == "testnet":
@@ -158,8 +172,8 @@ class HyperliquidTradingClient:
                 'sandbox': (environment == "testnet"),
                 'enableRateLimit': True,
                 'rateLimit': 100,  # 100ms between requests
-                'privateKey': private_key,  # Hyperliquid requires privateKey field
-                'walletAddress': self.wallet_address,
+                'privateKey': private_key,  # Signing key (master or agent)
+                'walletAddress': self.query_address,  # Address for balance/position queries
                 'options': {
                     'fetchMarkets': {
                         'hip3': {
@@ -170,15 +184,12 @@ class HyperliquidTradingClient:
             })
             self._disable_hip3_markets()
 
-            # Load markets to initialize token mappings (required for CCXT 4.5+)
-            try:
-                self.exchange.load_markets()
-                logger.info(f"CCXT markets loaded successfully for {environment}")
-            except Exception as market_err:
-                logger.warning(f"Failed to load CCXT markets (non-critical): {market_err}")
+            # Skip load_markets() — we use SDK for balance/positions/orders now.
+            # CCXT is kept as fallback but market loading crashes on testnet due to
+            # inconsistent spot metadata from Hyperliquid API.
 
             logger.info(
-                f"CCXT HyperliquidClient initialized: account_id={account_id} "
+                f"CCXT HyperliquidClient initialized (markets not loaded): account_id={account_id} "
                 f"environment={environment.upper()} wallet={self.wallet_address}"
             )
         except Exception as e:
@@ -195,16 +206,22 @@ class HyperliquidTradingClient:
             self.eth_wallet = EthAccount.from_key(private_key)
 
             # Initialize SDK Exchange
+            # account_address = query_address (master wallet for agent mode, same as wallet for legacy)
+            # Only pass empty spot_meta to skip spot token parsing (testnet has inconsistent spot data)
+            # Do NOT pass empty meta — perp metadata must load for coin_to_asset mappings
             self.sdk_exchange = Exchange(
                 wallet=self.eth_wallet,
                 base_url=self.api_url,
-                account_address=self.wallet_address
+                account_address=self.query_address,
+                spot_meta={"tokens": [], "universe": []},
             )
 
-            # Initialize SDK Info (for querying user fills and historical orders)
+            # Initialize SDK Info (for querying user state, fills, and historical orders)
+            # Only pass empty spot_meta to skip spot token parsing (testnet has inconsistent spot data)
             self.sdk_info = Info(
                 base_url=self.api_url,
-                skip_ws=True  # We don't need WebSocket for historical data queries
+                skip_ws=True,
+                spot_meta={"tokens": [], "universe": []},
             )
 
             logger.info(
@@ -400,14 +417,13 @@ class HyperliquidTradingClient:
         try:
             logger.info(f"Fetching account state for account {self.account_id} on {self.environment}")
 
-            # Use CCXT's fetchBalance to get account info
-            balance = self.exchange.fetch_balance()
+            # Use SDK Info.user_state for balance (avoids CCXT spot market loading issues)
+            user_state = self.sdk_info.user_state(self.query_address)
+            margin_summary = user_state.get('crossMarginSummary') or user_state.get('marginSummary', {})
 
-            # CCXT balance structure: {'free': {...}, 'used': {...}, 'total': {...}, 'info': {...}}
-            # Extract USDC balance (Hyperliquid uses USDC)
-            total_equity = float(balance.get('total', {}).get('USDC', 0) or 0)
-            used_margin = float(balance.get('used', {}).get('USDC', 0) or 0)
-            available_balance = float(balance.get('free', {}).get('USDC', 0) or 0)
+            total_equity = float(margin_summary.get('accountValue', 0) or 0)
+            used_margin = float(margin_summary.get('totalMarginUsed', 0) or 0)
+            available_balance = float(user_state.get('withdrawable', 0) or 0)
 
             # Calculate margin usage percentage (round to 2 decimal places)
             margin_usage_percent = round((used_margin / total_equity * 100), 2) if total_equity > 0 else 0
@@ -487,14 +503,9 @@ class HyperliquidTradingClient:
         try:
             logger.info(f"Fetching positions for account {self.account_id} on {self.environment}")
 
-            # Use CCXT's fetchPositions to get all positions
-            positions_raw = self.exchange.fetch_positions()
-
-            # Debug: Print all raw positions data to console
-            print(f"=== CCXT RAW POSITIONS DATA ===")
-            print(positions_raw)
-            print(f"=== END CCXT RAW DATA ===")
-            logger.info(f"CCXT RAW POSITIONS DATA: {positions_raw}")
+            # Use SDK Info.user_state for positions (avoids CCXT spot market loading issues)
+            user_state = self.sdk_info.user_state(self.query_address)
+            asset_positions = user_state.get('assetPositions', [])
 
             # Get user fills to calculate position opened times (only when needed for AI prompts)
             user_fills = []
@@ -504,20 +515,22 @@ class HyperliquidTradingClient:
                     logger.info(f"Retrieved {len(user_fills)} user fills for position timing calculation")
                 except Exception as fills_error:
                     logger.warning(f"Failed to get user fills for position timing: {fills_error}")
-                    # Continue without timing information
 
-            # Transform CCXT positions to our format
+            # Transform SDK positions to our format
             positions = []
-            for pos in positions_raw:
-                info_position = (pos.get('info') or {}).get('position') or {}
-                raw_size = info_position.get('szi')
+            for asset_pos in asset_positions:
+                pos_data = asset_pos.get('position', {})
+                raw_size = pos_data.get('szi')
                 try:
                     position_size = float(raw_size)
                 except (TypeError, ValueError):
                     position_size = 0.0
-                side = pos.get('side', '').capitalize()
 
-                coin = info_position.get('coin')
+                if abs(position_size) < 1e-8:
+                    continue
+
+                coin = pos_data.get('coin')
+                side = 'Long' if position_size > 0 else 'Short'
 
                 # Calculate position timing
                 opened_at = None
@@ -525,21 +538,18 @@ class HyperliquidTradingClient:
                 holding_duration_seconds = None
                 holding_duration_str = None
 
-                if user_fills and coin and abs(position_size) > 1e-8:
+                if user_fills and coin:
                     opened_at = self._calculate_position_opened_time(coin, position_size, user_fills)
                     if opened_at:
                         from datetime import datetime, timezone
                         import time as time_module
 
-                        # Use UTC time (consistent with session context display)
                         utc_dt = datetime.fromtimestamp(opened_at / 1000, tz=timezone.utc)
                         opened_at_str = utc_dt.strftime('%Y-%m-%d %H:%M:%S UTC')
 
-                        # Calculate holding duration
                         current_time_ms = int(time_module.time() * 1000)
                         holding_duration_seconds = (current_time_ms - opened_at) / 1000
 
-                        # Format duration as human-readable
                         hours = int(holding_duration_seconds // 3600)
                         minutes = int((holding_duration_seconds % 3600) // 60)
                         if hours > 0:
@@ -547,35 +557,35 @@ class HyperliquidTradingClient:
                         else:
                             holding_duration_str = f"{minutes}m"
 
+                entry_px = float(pos_data.get('entryPx', 0) or 0)
+                position_value = float(pos_data.get('positionValue', 0) or 0)
+
                 positions.append({
                     'coin': coin,
-                    'szi': position_size,  # Correct signed size
-                    'entry_px': float(info_position.get('entryPx', 0)),
-                    'position_value': float(info_position.get('positionValue', 0)),
-                    'unrealized_pnl': float(info_position.get('unrealizedPnl', 0)),
-                    'margin_used': float(info_position.get('marginUsed', 0)),
-                    'liquidation_px': float(info_position.get('liquidationPx') or 0),
-                    'leverage': float((info_position.get('leverage') or {}).get('value', 0)),
-                    'side': side,  # Correct direction from CCXT
+                    'szi': position_size,
+                    'entry_px': entry_px,
+                    'position_value': position_value,
+                    'unrealized_pnl': float(pos_data.get('unrealizedPnl', 0) or 0),
+                    'margin_used': float(pos_data.get('marginUsed', 0) or 0),
+                    'liquidation_px': float(pos_data.get('liquidationPx') or 0),
+                    'leverage': float((pos_data.get('leverage') or {}).get('value', 0)),
+                    'side': side,
 
-                    # Position timing information (NEW)
                     'opened_at': opened_at,
                     'opened_at_str': opened_at_str,
                     'holding_duration_seconds': holding_duration_seconds,
                     'holding_duration_str': holding_duration_str,
 
-                    # Hyperliquid specific fields
-                    'return_on_equity': float(info_position.get('returnOnEquity', 0)),
-                    'max_leverage': float(info_position.get('maxLeverage', 0)),
-                    'cum_funding_all_time': float((info_position.get('cumFunding') or {}).get('allTime', 0)),
-                    'cum_funding_since_open': float((info_position.get('cumFunding') or {}).get('sinceOpen', 0)),
-                    'leverage_type': (info_position.get('leverage') or {}).get('type'),
+                    'return_on_equity': float(pos_data.get('returnOnEquity', 0) or 0),
+                    'max_leverage': float(pos_data.get('maxLeverage', 0) or 0),
+                    'cum_funding_all_time': float((pos_data.get('cumFunding') or {}).get('allTime', 0)),
+                    'cum_funding_since_open': float((pos_data.get('cumFunding') or {}).get('sinceOpen', 0)),
+                    'leverage_type': (pos_data.get('leverage') or {}).get('type'),
 
-                    # CCXT calculated fields
-                    'notional': float(pos.get('notional', 0)),
-                    'percentage': float(pos.get('percentage', 0)),
-                    'contract_size': float(pos.get('contractSize', 1)),
-                    'margin_mode': pos.get('marginMode', '')
+                    'notional': position_value,
+                    'percentage': float(pos_data.get('returnOnEquity', 0) or 0) * 100,
+                    'contract_size': 1.0,
+                    'margin_mode': (pos_data.get('leverage') or {}).get('type', 'cross')
                 })
 
             logger.debug(f"Found {len(positions)} open positions")
@@ -3043,7 +3053,9 @@ def create_hyperliquid_client(
     account_id: int,
     private_key: str,
     environment: str,
-    wallet_address: str = None
+    wallet_address: str = None,
+    key_type: str = "private_key",
+    master_wallet_address: str = None
 ) -> HyperliquidTradingClient:
     """
     Factory function to create Hyperliquid trading client
@@ -3053,6 +3065,8 @@ def create_hyperliquid_client(
         private_key: Hyperliquid private key
         environment: "testnet" or "mainnet"
         wallet_address: Optional wallet address (if not provided, derived from private key)
+        key_type: "private_key" or "agent_key"
+        master_wallet_address: Required for agent_key mode
 
     Returns:
         Initialized HyperliquidTradingClient
@@ -3061,7 +3075,9 @@ def create_hyperliquid_client(
         account_id=account_id,
         private_key=private_key,
         wallet_address=wallet_address,
-        environment=environment
+        environment=environment,
+        key_type=key_type,
+        master_wallet_address=master_wallet_address
     )
 
 
@@ -3089,7 +3105,9 @@ def get_cached_trading_client(
     account_id: int,
     private_key: str,
     environment: str,
-    wallet_address: str = None
+    wallet_address: str = None,
+    key_type: str = "private_key",
+    master_wallet_address: str = None
 ) -> HyperliquidTradingClient:
     """
     Get or create a cached HyperliquidTradingClient.
@@ -3102,6 +3120,8 @@ def get_cached_trading_client(
         private_key: Hyperliquid private key
         environment: "testnet" or "mainnet"
         wallet_address: Optional wallet address
+        key_type: "private_key" or "agent_key"
+        master_wallet_address: Required for agent_key mode
 
     Returns:
         Cached or newly created HyperliquidTradingClient
@@ -3124,7 +3144,9 @@ def get_cached_trading_client(
             account_id=account_id,
             private_key=private_key,
             wallet_address=wallet_address,
-            environment=environment
+            environment=environment,
+            key_type=key_type,
+            master_wallet_address=master_wallet_address
         )
 
         elapsed = time.time() - start_time

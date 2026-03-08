@@ -30,6 +30,7 @@ import SystemLogs from '@/components/layout/SystemLogs'
 import PromptManager from '@/components/prompt/PromptManager'
 import SignalManager from '@/components/signal/SignalManager'
 import AttributionAnalysis from '@/components/analytics/AttributionAnalysis'
+import FactorLibrary from '@/components/factor/FactorLibrary'
 import TraderManagement from '@/components/trader/TraderManagement'
 import { HyperliquidPage } from '@/components/hyperliquid'
 import HyperliquidView from '@/components/hyperliquid/HyperliquidView'
@@ -43,7 +44,8 @@ import SettingsPage from '@/components/settings/SettingsPage'
 import { SplashScreen, HyperAiOnboarding, HyperAiPage } from '@/components/hyper-ai'
 // Remove CallbackPage import - handle inline
 import { AIDecision, getAccounts, checkMainnetAccounts, approveBuilder, type UnauthorizedAccount } from '@/lib/api'
-import { AuthorizationModal } from '@/components/hyperliquid'
+import { checkWalletUpgradeNeeded } from '@/lib/hyperliquidApi'
+import { AuthorizationModal, AgentWalletUpgradeModal } from '@/components/hyperliquid'
 import { ArenaDataProvider } from '@/contexts/ArenaDataContext'
 import { TradingModeProvider, useTradingMode } from '@/contexts/TradingModeContext'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
@@ -85,6 +87,7 @@ const PAGE_TITLES: Record<string, string> = {
   'program-trader': 'Programs',
   'signal-management': 'Signal System',
   'attribution': 'Attribution Analysis',
+  'factor-library': 'Factor Library',
   'trader-management': 'AI Trader Management',
   'hyperliquid': 'Manual Trading',
   'klines': 'K-Line Charts',
@@ -291,6 +294,8 @@ function App() {
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [unauthorizedAccounts, setUnauthorizedAccounts] = useState<UnauthorizedAccount[]>([])
   const authCheckedRef = useRef(false)
+  const [agentUpgradeModalOpen, setAgentUpgradeModalOpen] = useState(false)
+  const [walletsNeedUpgrade, setWalletsNeedUpgrade] = useState<any[]>([])
 
   // Debug function to manually trigger authorization modal
   // Uses negative IDs to avoid conflicts with real accounts
@@ -560,6 +565,17 @@ function App() {
           console.error('Failed to check mainnet accounts:', authError)
         }
       }
+
+      // Check agent wallet upgrade (every time accounts refresh)
+      try {
+        const upgradeResult = await checkWalletUpgradeNeeded()
+        if (upgradeResult.count > 0) {
+          setWalletsNeedUpgrade(upgradeResult.needsUpgrade)
+          setAgentUpgradeModalOpen(true)
+        }
+      } catch (upgradeError) {
+        console.error('Failed to check wallet upgrade:', upgradeError)
+      }
     } catch (e) {
       console.error('Failed to fetch accounts', e)
     } finally {
@@ -788,6 +804,10 @@ function App() {
           <AttributionAnalysis />
         )}
 
+        {currentPage === 'factor-library' && (
+          <FactorLibrary />
+        )}
+
         {currentPage === 'trader-management' && (
           <TraderManagement />
         )}
@@ -839,6 +859,16 @@ function App() {
         onClose={handleAuthModalClose}
         unauthorizedAccounts={unauthorizedAccounts}
         onAuthorizationComplete={handleAuthorizationComplete}
+      />
+      <AgentWalletUpgradeModal
+        isOpen={agentUpgradeModalOpen}
+        onClose={() => setAgentUpgradeModalOpen(false)}
+        walletsToUpgrade={walletsNeedUpgrade}
+        onUpgradeComplete={() => {
+          setAgentUpgradeModalOpen(false)
+          setWalletsNeedUpgrade([])
+          refreshAccounts()
+        }}
       />
     </>
   )

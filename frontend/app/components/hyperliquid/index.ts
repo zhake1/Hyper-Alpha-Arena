@@ -9,3 +9,4 @@ export { default as PositionsTable } from './PositionsTable';
 export { default as OrderForm } from './OrderForm';
 export { default as EnvironmentSwitcher } from './EnvironmentSwitcher';
 export { default as AuthorizationModal } from './AuthorizationModal';
+export { default as AgentWalletUpgradeModal } from './AgentWalletUpgradeModal';

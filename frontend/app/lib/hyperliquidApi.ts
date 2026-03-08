@@ -15,6 +15,13 @@ import type {
   ManualOrderResponse,
   TestConnectionResponse,
   HyperliquidHealthResponse,
+  HyperliquidEnvironment,
+  AgentWalletUpgradeRequest,
+  AgentWalletConfigRequest,
+  AgentWalletUpgradeResponse,
+  AgentWalletConfigResponse,
+  AgentWalletStatus,
+  WalletUpgradeCheckResponse,
 } from './types/hyperliquid';
 
 const HYPERLIQUID_API_BASE = '/hyperliquid';
@@ -509,6 +516,56 @@ export async function setGlobalTradingMode(
     method: 'POST',
     body: JSON.stringify({ mode }),
   });
+  return response.json();
+}
+
+/**
+ * Agent Wallet Management
+ */
+
+export async function upgradeToAgentWallet(
+  accountId: number,
+  environment: HyperliquidEnvironment,
+  agentName?: string
+): Promise<AgentWalletUpgradeResponse> {
+  const response = await apiRequest(
+    `${HYPERLIQUID_API_BASE}/accounts/${accountId}/wallet/upgrade-to-agent`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ environment, agentName: agentName || `HyperArena-${accountId}` }),
+    }
+  );
+  return response.json();
+}
+
+export async function configureAgentWallet(
+  accountId: number,
+  config: AgentWalletConfigRequest
+): Promise<AgentWalletConfigResponse> {
+  const response = await apiRequest(
+    `${HYPERLIQUID_API_BASE}/accounts/${accountId}/wallet/agent`,
+    {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }
+  );
+  return response.json();
+}
+
+export async function getAgentWalletStatus(
+  accountId: number,
+  environment: HyperliquidEnvironment
+): Promise<AgentWalletStatus> {
+  const response = await apiRequest(
+    `${HYPERLIQUID_API_BASE}/accounts/${accountId}/wallet/agent-status?environment=${environment}`
+  );
+  return response.json();
+}
+
+export async function checkWalletUpgradeNeeded(): Promise<WalletUpgradeCheckResponse> {
+  const response = await apiRequest(
+    `${HYPERLIQUID_API_BASE}/wallet-upgrade-check`
+  );
   return response.json();
 }
 

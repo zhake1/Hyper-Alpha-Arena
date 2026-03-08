@@ -160,6 +160,64 @@ export interface MarginStatus {
   message: string;
 }
 
+// Agent Wallet types
+export type WalletKeyType = 'private_key' | 'agent_key';
+
+export interface AgentWalletUpgradeRequest {
+  environment: HyperliquidEnvironment;
+  agentName?: string;
+}
+
+export interface AgentWalletConfigRequest {
+  agentPrivateKey: string;
+  masterWalletAddress: string;
+  environment: HyperliquidEnvironment;
+  maxLeverage?: number;
+  defaultLeverage?: number;
+}
+
+export interface AgentWalletUpgradeResponse {
+  success: boolean;
+  message: string;
+  agentAddress: string;
+  masterWalletAddress: string;
+  agentName: string;
+  validUntil: string | null;
+}
+
+export interface AgentWalletConfigResponse {
+  success: boolean;
+  walletId: number;
+  agentAddress: string;
+  masterWalletAddress: string;
+  validUntil: string | null;
+  message: string;
+}
+
+export interface AgentWalletStatus {
+  success: boolean;
+  keyType: WalletKeyType;
+  agentAddress?: string;
+  masterWalletAddress?: string;
+  agentName?: string;
+  validUntil?: string | null;
+  isExpired?: boolean;
+  daysRemaining?: number;
+  found?: boolean;
+  message?: string;
+}
+
+export interface WalletUpgradeCheckResponse {
+  success: boolean;
+  needsUpgrade: {
+    accountId: number;
+    accountName: string;
+    environment: HyperliquidEnvironment;
+    walletAddress: string;
+  }[];
+  count: number;
+}
+
 export interface HyperliquidActionSummaryEntry {
   actionType: string;
   count: number;

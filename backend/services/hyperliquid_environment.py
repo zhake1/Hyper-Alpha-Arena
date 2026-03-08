@@ -269,13 +269,17 @@ def get_hyperliquid_client(db: Session, account_id: int, override_environment: s
 
     # Create and return client (use cached client for performance)
     wallet_address = wallet.wallet_address if wallet else None
+    key_type = wallet.key_type if wallet and hasattr(wallet, 'key_type') and wallet.key_type else "private_key"
+    master_wallet_address = wallet.master_wallet_address if wallet and hasattr(wallet, 'master_wallet_address') else None
     import sys
-    print(f"[DEBUG] get_hyperliquid_client: account_id={account_id}, environment={environment}, wallet={wallet}, wallet_address={wallet_address}", file=sys.stderr, flush=True)
+    print(f"[DEBUG] get_hyperliquid_client: account_id={account_id}, environment={environment}, wallet={wallet}, wallet_address={wallet_address}, key_type={key_type}", file=sys.stderr, flush=True)
     return get_cached_trading_client(
         account_id=account_id,
         private_key=private_key,
         wallet_address=wallet_address,
-        environment=environment
+        environment=environment,
+        key_type=key_type,
+        master_wallet_address=master_wallet_address
     )
 
 
