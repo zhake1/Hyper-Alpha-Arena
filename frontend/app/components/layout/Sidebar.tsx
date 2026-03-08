@@ -1,4 +1,4 @@
-import { BarChart3, FileText, NotebookPen, Coins, MessageSquare, Mail, Bot, Ghost, ScrollText, Settings } from 'lucide-react'
+import { BarChart3, FileText, NotebookPen, Coins, MessageSquare, Mail, Bot, Ghost, ScrollText, Settings, FlaskConical } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import ContactDialog from '@/components/contact/ContactDialog'
 
@@ -115,6 +115,7 @@ export default function Sidebar({ currentPage = 'comprehensive', onPageChange, o
     { label: t('sidebar.programTrader', 'Program Trader'), page: 'program-trader', icon: ScrollText },
     { label: t('sidebar.signals', 'Signals'), page: 'signal-management', icon: SignalIcon },
     { label: t('sidebar.attribution', 'Attribution'), page: 'attribution', icon: AttributionIcon },
+    { label: t('sidebar.factorLibrary', 'Factors'), page: 'factor-library', icon: FlaskConical },
     { label: t('sidebar.manualTrading', 'Manual Trading'), page: 'hyperliquid', icon: Coins },
     { label: t('sidebar.klines', 'K-Lines'), page: 'klines', icon: KLinesIcon },
     { label: t('sidebar.premium', 'Premium'), page: 'premium-features', icon: PremiumIcon },

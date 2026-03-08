@@ -39,6 +39,8 @@ services:
       HYPERLIQUID_BUILDER_FEE: "30"
       # Binance Broker Configuration
       BINANCE_BROKER_ID: "tbyPbcd9"
+      # Factor Engine
+      FACTOR_ENGINE_ENABLED: "true"
       # Explicitly disable all proxy settings in container
       HTTP_PROXY: ""
       HTTPS_PROXY: ""

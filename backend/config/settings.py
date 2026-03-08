@@ -53,3 +53,6 @@ BINANCE_BROKER_CONFIG = BinanceBrokerConfig(
 # Binance Daily Quota for non-rebate mainnet accounts
 # This limits the number of AI-executed trades per day to prevent excessive API usage
 BINANCE_DAILY_QUOTA_LIMIT = 40
+
+# Factor Engine toggle (set to "true" to enable factor computation)
+FACTOR_ENGINE_ENABLED = os.getenv("FACTOR_ENGINE_ENABLED", "false").lower() == "true"

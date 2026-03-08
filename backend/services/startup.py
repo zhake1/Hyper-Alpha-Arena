@@ -162,6 +162,17 @@ def initialize_services():
         print("Binance WebSocket collector started")
         logger.info(f"[Binance] WebSocket collector started with symbols: {binance_watchlist}")
 
+        # Start Factor Computation Engine (if enabled)
+        from config.settings import FACTOR_ENGINE_ENABLED
+        if FACTOR_ENGINE_ENABLED:
+            from services.factor_computation_service import factor_computation_service
+            from services.factor_effectiveness_service import factor_effectiveness_service
+            factor_computation_service.start()
+            factor_effectiveness_service.start()
+            logger.info("[FactorEngine] Factor computation + effectiveness services started")
+        else:
+            print("[FactorEngine] Disabled (set FACTOR_ENGINE_ENABLED=true to enable)")
+
         logger.info("All services initialized successfully")
 
     except Exception as e:

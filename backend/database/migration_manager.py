@@ -70,6 +70,9 @@ MIGRATIONS = [
     "add_soft_delete_fields.py",
     "create_bot_integration_tables.py",
     "fix_is_deleted_default.py",
+    "create_factor_system_tables.py",
+    "add_exchange_to_factor_effectiveness.py",
+    "add_agent_wallet_fields.py",
 ]
 
 

@@ -605,6 +605,7 @@ from api.binance_routes import router as binance_router
 from api.ai_stream_routes import router as ai_stream_router
 from api.hyper_ai_routes import router as hyper_ai_router
 from api.bot_routes import router as bot_router
+from api.factor_routes import router as factor_router
 from routes.program_routes import router as program_router
 # Removed: AI account routes merged into account_routes (unified AI trader accounts)
 
@@ -635,6 +636,7 @@ app.include_router(binance_router)
 app.include_router(ai_stream_router)
 app.include_router(hyper_ai_router)
 app.include_router(bot_router)
+app.include_router(factor_router)
 # app.include_router(ai_account_router, prefix="/api")  # Removed - merged into account_router
 
 # Strategy route aliases for frontend compatibility

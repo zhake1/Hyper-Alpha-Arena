@@ -30,6 +30,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "discord.py>=2.3.0",
     "mistune>=3.0.0",
+    "scipy>=1.11.0",
 ]
 
 [tool.uv]
